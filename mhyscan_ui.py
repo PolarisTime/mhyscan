@@ -400,6 +400,10 @@ class MainWindow(QMainWindow):
 
     # ---- 抢码 ----
     def on_scan(self):
+        # 防止重复启动 (按钮已禁用, 但双击/快速连点兜底)
+        if self.scan_worker and self.scan_worker.isRunning():
+            self.log("✘ 扫描已在运行中, 请先停止")
+            return
         acc = self._get_selected_account()
         if acc is None:
             self.log("✘ 没有可用账号, 先扫码登录或添加 Cookie")
@@ -440,6 +444,9 @@ class MainWindow(QMainWindow):
         if self.scan_worker and self.scan_worker.isRunning():
             self.scan_worker.stop()
             self.log("正在停止...")
+            self.status_label.setText("正在停止...")
+        else:
+            self.log("当前没有正在运行的扫描")
 
     def _on_scan_done(self, ok, ticket):
         self.btn_scan.setEnabled(True)
@@ -447,6 +454,9 @@ class MainWindow(QMainWindow):
         if ok:
             self.status_label.setText(f"✔ 抢码成功 ticket={ticket}")
             self.log(f"✔ 抢码成功! ticket={ticket}")
+        elif ticket == "停止":
+            self.status_label.setText("已停止")
+            self.log("已停止")
         else:
             self.status_label.setText("✘ 抢码失败")
             self.log(f"✘ 抢码失败: {ticket}")
