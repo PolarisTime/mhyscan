@@ -60,14 +60,28 @@ def is_login_qr_url(url: str) -> bool:
 
 
 def _rss_kb() -> int:
-    """当前进程内存 RSS (KB), 用于泄露监控"""
-    try:
-        with open("/proc/self/status") as f:
-            for line in f:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1])
-    except (OSError, ValueError):
-        pass
+    """当前进程内存 RSS (KB), 用于泄露监控 (跨平台)
+
+    Linux: 读 /proc/self/status 的 VmRSS
+    Windows/macOS: 优先 psutil; 不可用时回退 0
+    """
+    import sys
+
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1])
+        except (OSError, ValueError):
+            pass
+    else:
+        try:
+            import psutil
+
+            return int(psutil.Process().memory_info().rss / 1024)
+        except (ImportError, Exception):
+            pass
     return 0
 
 

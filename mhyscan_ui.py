@@ -9,10 +9,13 @@
 界面布局:
   ┌─────────────────────────────────────────┐
   │ [账号管理区]                             │
-  │   登录  B站登录  添加Cookie  刷新  列表    │
-  │ [直播间抢码区]                           │
-  │   平台[▾] RID[____] [开始扫描] [停止]     │
-  │ [日志区] (实时滚动)                      │
+  │   米游社扫码登录  添加Cookie  刷新        │
+  │   B站凭证: [已登录/未登录] [B站登录][退出] │
+  │   ─ 账号列表 ─────────────────────────   │
+  │ [直播间抢码设置区]                       │
+  │   平台[▾] RID[____] 超时[180]           │
+  │   [开始扫描] [停止]  状态               │
+  │ [日志区] (实时滚动)                     │
   └─────────────────────────────────────────┘
 """
 from __future__ import annotations
@@ -254,7 +257,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
 
-        # ===== 账号区 =====
+        # ===== 账号管理区 =====
         acc_frame = QFrame()
         acc_frame.setFrameShape(QFrame.StyledPanel)
         acc_layout = QVBoxLayout(acc_frame)
@@ -264,21 +267,36 @@ class MainWindow(QMainWindow):
         acc_title.setStyleSheet("font-weight: bold; font-size: 14px;")
         acc_layout.addWidget(acc_title)
 
+        # 第一行: 米游社账号按钮
         btn_row = QHBoxLayout()
-        self.btn_login = QPushButton("扫码登录")
-        self.btn_bili = QPushButton("B站扫码登录")
+        self.btn_login = QPushButton("米游社扫码登录")
         self.btn_add = QPushButton("添加Cookie")
         self.btn_refresh = QPushButton("刷新")
-        for b in (self.btn_login, self.btn_bili, self.btn_add, self.btn_refresh):
+        for b in (self.btn_login, self.btn_add, self.btn_refresh):
             btn_row.addWidget(b)
         btn_row.addStretch()
         acc_layout.addLayout(btn_row)
 
+        # 第二行: B站登录状态
+        bili_row = QHBoxLayout()
+        bili_row.addWidget(QLabel("B站凭证:"))
+        self.bili_status_label = QLabel("检测中...")
+        self.bili_status_label.setStyleSheet("font-weight: bold;")
+        bili_row.addWidget(self.bili_status_label)
+        self.btn_bili = QPushButton("B站扫码登录")
+        self.btn_bili_logout = QPushButton("退出B站")
+        self.btn_bili_logout.setEnabled(False)
+        bili_row.addWidget(self.btn_bili)
+        bili_row.addWidget(self.btn_bili_logout)
+        bili_row.addStretch()
+        acc_layout.addLayout(bili_row)
+
+        # 账号列表
         self.account_list = QListWidget()
-        self.account_list.setFixedHeight(120)
+        self.account_list.setFixedHeight(110)
         acc_layout.addWidget(self.account_list)
 
-        # ===== 直播间区 =====
+        # ===== 直播间抢码设置区 =====
         scan_frame = QFrame()
         scan_frame.setFrameShape(QFrame.StyledPanel)
         scan_layout = QGridLayout(scan_frame)
@@ -286,8 +304,9 @@ class MainWindow(QMainWindow):
 
         scan_title = QLabel("直播间抢码")
         scan_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        scan_layout.addWidget(scan_title, 0, 0, 1, 4)
+        scan_layout.addWidget(scan_title, 0, 0, 1, 6)
 
+        # 第1行: 平台 / RID
         scan_layout.addWidget(QLabel("平台:"), 1, 0)
         self.platform_combo = QComboBox()
         self.platform_combo.addItem("B站", LivePlatform.BiliBili)
@@ -299,6 +318,12 @@ class MainWindow(QMainWindow):
         self.rid_edit.setPlaceholderText("直播间房间号 (纯数字)")
         scan_layout.addWidget(self.rid_edit, 1, 3)
 
+        scan_layout.addWidget(QLabel("超时(秒):"), 1, 4)
+        self.timeout_edit = QLineEdit("180")
+        self.timeout_edit.setFixedWidth(60)
+        scan_layout.addWidget(self.timeout_edit, 1, 5)
+
+        # 第2行: 按钮 + 状态
         self.btn_scan = QPushButton("开始扫描")
         self.btn_stop = QPushButton("停止")
         self.btn_stop.setEnabled(False)
@@ -308,7 +333,7 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("就绪")
         self.status_label.setStyleSheet("color: #666;")
-        scan_layout.addWidget(self.status_label, 2, 3)
+        scan_layout.addWidget(self.status_label, 2, 3, 1, 3)
 
         # ===== 日志区 =====
         log_frame = QFrame()
@@ -328,10 +353,14 @@ class MainWindow(QMainWindow):
         # ---- 信号连接 ----
         self.btn_login.clicked.connect(self.on_login)
         self.btn_bili.clicked.connect(self.on_bili_login)
+        self.btn_bili_logout.clicked.connect(self.on_bili_logout)
         self.btn_add.clicked.connect(self.on_add_cookie)
         self.btn_refresh.clicked.connect(self.refresh_accounts)
         self.btn_scan.clicked.connect(self.on_scan)
         self.btn_stop.clicked.connect(self.on_stop)
+
+        # 初始刷新 B站状态
+        self.refresh_bili_status()
 
     # ---- 日志 ----
     def log(self, msg: str = ""):
@@ -357,6 +386,35 @@ class MainWindow(QMainWindow):
             self.account_list.addItem(
                 f"[{i}] {a.get('name') or '?'}  uid={a.get('uid')}  "
                 f"stoken={str(a.get('access_key'))[:8]}...")
+
+    # ---- B站登录状态 ----
+    def refresh_bili_status(self):
+        """检测 B站 cookie 状态并更新 UI 徽章 (强制刷新进程缓存)"""
+        from mhycli.live_link import get_bili_cookie
+
+        cookie = get_bili_cookie(force_refresh=True)
+        if cookie:
+            self.bili_status_label.setText("✔ 已登录")
+            self.bili_status_label.setStyleSheet("color: green; font-weight: bold;")
+            self.btn_bili_logout.setEnabled(True)
+            self.log("B站凭证: 已登录")
+        else:
+            self.bili_status_label.setText("✘ 未登录")
+            self.bili_status_label.setStyleSheet("color: gray; font-weight: bold;")
+            self.btn_bili_logout.setEnabled(False)
+            self.log("B站凭证: 未登录 (拉流仅 720P)")
+
+    def on_bili_logout(self):
+        """退出 B站: 删除 cookie 文件"""
+        from mhycli.live_link import _BILI_COOKIE_FILE
+
+        try:
+            if _BILI_COOKIE_FILE.exists():
+                _BILI_COOKIE_FILE.unlink()
+            self.log("✔ 已退出 B站登录, 凭证已清除")
+        except Exception as e:
+            self.log(f"✘ 退出 B站失败: {e}")
+        self.refresh_bili_status()
 
     def _get_selected_account(self):
         accs = self.store.list_accounts()
@@ -437,6 +495,7 @@ class MainWindow(QMainWindow):
         self._close_qr_dialogs()
         self.log(f"✔ B站登录成功, cookie: {summary}")
         self.log(f"  已保存到 Config/bili_cookie.json, 后续拉流使用 (1080P + 抗限流)")
+        self.refresh_bili_status()
 
     # ---- 抢码 ----
     def on_scan(self):
@@ -459,12 +518,19 @@ class MainWindow(QMainWindow):
             self.log("✘ RID 必须是纯数字")
             return
 
+        # 超时时间 (默认 180)
+        try:
+            timeout = float(self.timeout_edit.text().strip() or "180")
+        except ValueError:
+            self.log("✘ 超时时间必须是数字")
+            return
+
         platform = self.platform_combo.currentData()
         self.log(f"使用账号 {acc.get('name')} (uid={acc.get('uid')}) 监视直播间 RID={rid}")
-        self.log(f"平台: {'B站' if platform == LivePlatform.BiliBili else '抖音'}")
+        self.log(f"平台: {'B站' if platform == LivePlatform.BiliBili else '抖音'}  超时: {timeout}s")
 
         client = MhyClient()
-        self.scan_worker = ScanWorker(client, stoken, mid, platform, rid, 180.0, self)
+        self.scan_worker = ScanWorker(client, stoken, mid, platform, rid, timeout, self)
         self.scan_worker.log.connect(self.log)
         self.scan_worker.finished.connect(self._on_scan_done)
         self.scan_worker.start()

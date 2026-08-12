@@ -34,6 +34,8 @@ a = Analysis(
         'numpy',
         'numpy._core',
         'numpy._core._multiarray_umath',
+        # psutil (Windows/macOS 内存监控)
+        'psutil',
         # 二维码生成
         'qrcode',
         'qrcode.image.pil',

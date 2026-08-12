@@ -40,16 +40,17 @@ _bili_cookie_cache: str | None = None
 _bili_cookie_loaded = False
 
 
-def get_bili_cookie() -> str:
+def get_bili_cookie(force_refresh: bool = False) -> str:
     """获取 B站 cookie (复用 biliup 逻辑)
 
     优先级:
       1. 环境变量 BILIBILI_COOKIE (直接 Cookie 字符串)
       2. Config/bili_cookie.json (biliup 导出格式)
     返回 Cookie 字符串; 无则返回空串
+    force_refresh=True: 忽略进程缓存, 重新读取 (B站登录/退出后需调用)
     """
     global _bili_cookie_cache, _bili_cookie_loaded
-    if _bili_cookie_loaded:
+    if _bili_cookie_loaded and not force_refresh:
         return _bili_cookie_cache or ""
 
     # 1. 环境变量
@@ -70,8 +71,10 @@ def get_bili_cookie() -> str:
                 value = c.get("value")
                 if name and value:
                     parts.append(f"{name}={value}")
-            if parts:
-                _bili_cookie_cache = ";".join(parts)
+            _bili_cookie_cache = ";".join(parts) if parts else None
+        else:
+            # 文件不存在 (含 force_refresh 后删除的情况): 清缓存
+            _bili_cookie_cache = None
     except Exception:
         _bili_cookie_cache = None
 
