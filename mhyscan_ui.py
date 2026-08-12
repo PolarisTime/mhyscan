@@ -62,21 +62,22 @@ class LoginWorker(QThread):
             pass
 
         def on_status(status):
-            if self._stopped:
-                raise _Stopped()
+            pass
 
         def on_qr(url, ticket):
             self.qr_ready.emit(url)
 
         try:
             client = MhyClient()
-            session = app_qr_login(client, on_status=on_status, on_qr=on_qr, timeout=300)
+            # is_stopped 每轮轮询前检查, 停止即时生效 (不依赖 on_status 触发时机)
+            session = app_qr_login(client, on_status=on_status, on_qr=on_qr,
+                                   timeout=300, is_stopped=lambda: self._stopped)
+            if self._stopped:
+                return  # 用户主动停止
             if not session.stoken:
                 self.failed.emit("扫码登录失败或超时")
                 return
             self.finished_ok.emit(session.uid, session.stoken, session.mid)
-        except _Stopped:
-            return  # 用户主动停止, 静默返回
         except Exception as e:
             self.failed.emit(f"扫码登录异常: {e}")
 
@@ -98,13 +99,6 @@ class BiliLoginWorker(QThread):
         self._stopped = True
 
     def run(self):
-        class _Stopped(Exception):
-            pass
-
-        def on_status(code):
-            if self._stopped:
-                raise _Stopped()
-
         try:
             from mhycli import bili_login
             import requests
@@ -112,15 +106,18 @@ class BiliLoginWorker(QThread):
             session = requests.Session()
             qrcode_url, auth_code = bili_login.get_qrcode(session)
             self.qr_ready.emit(qrcode_url)
-            resp = bili_login.poll_login(session, auth_code, on_status=on_status, timeout=180)
+            try:
+                resp = bili_login.poll_login(session, auth_code,
+                                             on_status=None, timeout=180,
+                                             is_stopped=lambda: self._stopped)
+            except StopIteration:
+                return  # 用户主动停止
             cookies = bili_login.extract_cookies(resp)
             if not cookies:
                 self.failed.emit("登录成功但未获取到 cookie")
                 return
             bili_login.save_cookies_to_file(cookies)
             self.finished_ok.emit(bili_login.cookie_summary(cookies))
-        except _Stopped:
-            return  # 用户主动停止, 静默返回
         except TimeoutError:
             self.failed.emit("扫码登录超时")
         except Exception as e:

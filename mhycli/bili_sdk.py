@@ -13,7 +13,7 @@ import time
 
 import requests
 
-from .crypto import hmac_sha256_hex, md5, rsa_encrypt_base64
+from .crypto import md5, rsa_encrypt_base64
 
 BILI_BASE = "https://line1-sdk-center-login-sh.biligame.net"
 BILI_RSA = f"{BILI_BASE}/api/client/rsa"

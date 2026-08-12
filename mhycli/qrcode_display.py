@@ -1,8 +1,6 @@
 """终端二维码渲染 — 用 qrcode 生成, ANSI 半块字符在终端显示 + 保存 PNG"""
 from __future__ import annotations
 
-import shutil
-
 import qrcode
 
 

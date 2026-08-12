@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .api_client import (
     MhyClient,
@@ -28,11 +28,13 @@ class QrSession:
     mid: str = ""
 
 
-def app_qr_login(client: MhyClient, on_status=None, on_qr=None, timeout: float = 300.0) -> QrSession:
+def app_qr_login(client: MhyClient, on_status=None, on_qr=None,
+                 timeout: float = 300.0, is_stopped=None) -> QrSession:
     """App 扫码登录: 创建二维码 → on_qr(url, ticket) → 轮询到 Confirmed
 
     on_status(status): 状态变化回调 (Created/Scanned/Confirmed/Expired)
     on_qr(url, ticket): 二维码创建成功后立即调用 (用于展示二维码)
+    is_stopped(): 可选, 每轮轮询前调用, 返回 True 则提前退出 (用于 UI 停止)
     """
     session = QrSession()
     ok, url, ticket, msg = client.app_create_qr()
@@ -46,6 +48,8 @@ def app_qr_login(client: MhyClient, on_status=None, on_qr=None, timeout: float =
     deadline = time.time() + timeout
     last = ""
     while time.time() < deadline:
+        if is_stopped and is_stopped():
+            break  # 用户停止
         rc, status, data = client.app_query_status(session.ticket)
         if status != last:
             if on_status:

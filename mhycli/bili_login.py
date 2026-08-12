@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-import uuid
 from pathlib import Path
 
 import requests
@@ -78,17 +77,20 @@ def get_qrcode(session: requests.Session | None = None) -> tuple[str, str]:
 
 
 def poll_login(session: requests.Session | None, auth_code: str,
-               on_status=None, timeout: float = 180.0) -> dict:
+               on_status=None, timeout: float = 180.0, is_stopped=None) -> dict:
     """轮询扫码状态, 登录成功返回完整响应 (含 data.cookie_info)
 
     对应 biliup login_by_qrcode
     on_status(code): 状态回调 (86039=等待确认, -4=未扫, -5=已扫, 0=成功)
+    is_stopped(): 可选, 每轮轮询前调用, 返回 True 则抛 StopIteration 退出
     """
     from urllib.parse import urlencode
 
     s = session or requests.Session()
     deadline = time.time() + timeout
     while time.time() < deadline:
+        if is_stopped and is_stopped():
+            raise StopIteration("扫码登录已停止")
         form = {
             "appkey": BILI_TV_APPKEY,
             "auth_code": auth_code,
