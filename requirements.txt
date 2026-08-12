@@ -6,3 +6,4 @@ Pillow>=10
 av>=13
 PySide6>=6.6
 numpy>=1.26
+tzdata>=2024.1

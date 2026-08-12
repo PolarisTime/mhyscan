@@ -335,10 +335,16 @@ class MainWindow(QMainWindow):
 
     # ---- 日志 ----
     def log(self, msg: str = ""):
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
+        # 上海时区; 打包环境缺 tzdata 时回退系统本地时间, 避免崩溃
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
 
-        ts = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y年%m月%d日 %H:%M:%S")
+            ts = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y年%m月%d日 %H:%M:%S")
+        except Exception:
+            from datetime import datetime
+
+            ts = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
         self.log_view.appendPlainText(f"[{ts}] {msg}")
         self.log_view.verticalScrollBar().setValue(
             self.log_view.verticalScrollBar().maximum())

@@ -21,6 +21,8 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
+        # tzdata: Windows 打包必需 (zoneinfo 时区数据, 缺则 ZoneInfo 崩溃)
+        'tzdata',
         # PyAV (整包收集, 协议/编解码器由内部自动加载)
         'av',
         'av.codec',
