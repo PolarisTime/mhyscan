@@ -1,0 +1,7 @@
+requests>=2.31
+zxing-cpp>=2.2
+cryptography>=42
+qrcode>=7.4
+Pillow>=10
+av>=13
+PySide6>=6.6

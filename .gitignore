@@ -1,0 +1,24 @@
+# ===== 敏感数据 (禁止提交) =====
+/Config/
+*.cookie
+login_qrcode.png
+bili_login_qrcode.png
+qr_login.png
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# ===== 构建产物 =====
+build/
+dist/
+
+# ===== 系统/IDE =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
