@@ -45,7 +45,8 @@ APP_DIR = Path(__file__).resolve().parent
 # 工作线程: 扫码登录
 # =====================================================================
 class LoginWorker(QThread):
-    finished_ok = Signal(str, str, str)   # uid, stoken, mid
+    qr_ready = Signal(str)              # 二维码 URL (用于弹窗展示)
+    finished_ok = Signal(str, str, str)  # uid, stoken, mid
     failed = Signal(str)
 
     def __init__(self, parent=None):
@@ -59,7 +60,10 @@ class LoginWorker(QThread):
             def on_status(status):
                 pass
 
-            session = app_qr_login(client, on_status=on_status, timeout=300)
+            def on_qr(url, ticket):
+                self.qr_ready.emit(url)
+
+            session = app_qr_login(client, on_status=on_status, on_qr=on_qr, timeout=300)
             if not session.stoken:
                 self.failed.emit("扫码登录失败或超时")
                 return
@@ -72,6 +76,7 @@ class LoginWorker(QThread):
 # 工作线程: B站扫码登录 (保存拉流凭证)
 # =====================================================================
 class BiliLoginWorker(QThread):
+    qr_ready = Signal(str)   # 二维码 URL (用于弹窗展示)
     finished_ok = Signal(str)
     failed = Signal(str)
 
@@ -82,6 +87,7 @@ class BiliLoginWorker(QThread):
 
             session = requests.Session()
             qrcode_url, auth_code = bili_login.get_qrcode(session)
+            self.qr_ready.emit(qrcode_url)
             resp = bili_login.poll_login(session, auth_code, timeout=180)
             cookies = bili_login.extract_cookies(resp)
             if not cookies:
@@ -172,10 +178,10 @@ class QrCodeDialog(QDialog):
         lbl = QLabel(label)
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
-        # 用终端字符画二维码兜底 + 保存 PNG
-        from mhycli.qrcode_display import save_qr_png
-        from io import BytesIO
-        import qrcode as qrcode_lib
+        # 保存 PNG 并显示; 失败则用终端字符画兜底
+        from mhycli.qrcode_display import save_qr_png, print_qr_terminal
+        from io import StringIO
+        import sys
 
         png_path = APP_DIR / "qr_login.png"
         try:
@@ -187,8 +193,18 @@ class QrCodeDialog(QDialog):
             img.setAlignment(Qt.AlignCenter)
             layout.addWidget(img)
         except Exception:
+            # 兜底: 终端字符画 (等宽字体)
+            buf = StringIO()
+            old = sys.stdout
+            sys.stdout = buf
+            try:
+                print_qr_terminal(url)
+            finally:
+                sys.stdout = old
             text = QPlainTextEdit()
             text.setReadOnly(True)
+            text.setPlainText(buf.getvalue())
+            text.setFont(QFont("Consolas", 9))
             text.setFixedHeight(300)
             layout.addWidget(text)
 
@@ -324,9 +340,23 @@ class MainWindow(QMainWindow):
             return
         self.log("正在创建 App 登录二维码...")
         self.login_worker = LoginWorker(self)
+        self.login_worker.qr_ready.connect(self._show_qr_dialog)
         self.login_worker.finished_ok.connect(self._on_login_ok)
         self.login_worker.failed.connect(self._on_worker_failed)
         self.login_worker.start()
+
+    def _show_qr_dialog(self, url, label="请用米游社APP扫描二维码登录"):
+        # 非模态: 不阻塞主线程, 扫码轮询在子线程继续
+        if not hasattr(self, "_qr_dialogs"):
+            self._qr_dialogs = []
+        dialog = QrCodeDialog(url, label, self)
+        dialog.setAttribute(Qt.WA_DeleteOnClose)
+        dialog.show()
+        # 保持引用, 避免被垃圾回收
+        self._qr_dialogs.append(dialog)
+        for d in self._qr_dialogs:
+            if not d.isVisible():
+                self._qr_dialogs.remove(d)
 
     def _on_login_ok(self, uid, stoken, mid):
         ok = self.store.add_account(f"账号{uid}", stoken, uid, mid, "官服")
@@ -359,9 +389,13 @@ class MainWindow(QMainWindow):
             return
         self.log("正在获取 B站登录二维码 (TV端接口)...")
         self.bili_worker = BiliLoginWorker(self)
+        self.bili_worker.qr_ready.connect(self._show_qr_dialog_bili)
         self.bili_worker.finished_ok.connect(self._on_bili_ok)
         self.bili_worker.failed.connect(self._on_worker_failed)
         self.bili_worker.start()
+
+    def _show_qr_dialog_bili(self, url):
+        self._show_qr_dialog(url, "请用B站APP扫描二维码登录")
 
     def _on_bili_ok(self, summary):
         self.log(f"✔ B站登录成功, cookie: {summary}")
@@ -425,9 +459,11 @@ class MainWindow(QMainWindow):
         self.log(f"✘ {msg}")
 
     def closeEvent(self, event):
-        if self.scan_worker and self.scan_worker.isRunning():
-            self.scan_worker.stop()
-            self.scan_worker.wait(3000)
+        # 停止所有工作线程, 避免退出时崩溃 (QThread destroyed while running)
+        for w in (self.scan_worker, self.login_worker, self.bili_worker, getattr(self, "roles_worker", None)):
+            if w and w.isRunning():
+                w.stop() if hasattr(w, "stop") else w.terminate()
+                w.wait(3000)
         event.accept()
 
 
