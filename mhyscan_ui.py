@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QComboBox, QListWidget,
@@ -174,39 +174,34 @@ class QrCodeDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("扫码登录")
         self.setModal(True)
+        self.resize(360, 440)
         layout = QVBoxLayout(self)
         lbl = QLabel(label)
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
-        # 保存 PNG 并显示; 失败则用终端字符画兜底
-        from mhycli.qrcode_display import save_qr_png, print_qr_terminal
-        from io import StringIO
-        import sys
+        # 内存中生成二维码图片 (不依赖写文件, 打包后目录只读也可用)
+        from mhycli.qrcode_display import _build_matrix
 
-        png_path = APP_DIR / "qr_login.png"
-        try:
-            save_qr_png(url, str(png_path))
-            pixmap = QPixmap(str(png_path))
-            img = QLabel()
-            img.setPixmap(pixmap.scaled(280, 280, Qt.KeepAspectRatio,
-                                        Qt.SmoothTransformation))
-            img.setAlignment(Qt.AlignCenter)
-            layout.addWidget(img)
-        except Exception:
-            # 兜底: 终端字符画 (等宽字体)
-            buf = StringIO()
-            old = sys.stdout
-            sys.stdout = buf
-            try:
-                print_qr_terminal(url)
-            finally:
-                sys.stdout = old
-            text = QPlainTextEdit()
-            text.setReadOnly(True)
-            text.setPlainText(buf.getvalue())
-            text.setFont(QFont("Consolas", 9))
-            text.setFixedHeight(300)
-            layout.addWidget(text)
+        mat = _build_matrix(url)
+        size = 300
+        img = QPixmap(size, size)
+        img.fill(Qt.white)
+        painter = QPainter(img)
+        painter.fillRect(img.rect(), Qt.white)
+        painter.setBrush(Qt.black)
+        painter.setPen(Qt.NoPen)
+        n = len(mat)
+        cell = size / n
+        for y, row in enumerate(mat):
+            for x, v in enumerate(row):
+                if v:
+                    painter.drawRect(int(x * cell), int(y * cell),
+                                     int(cell) + 1, int(cell) + 1)
+        painter.end()
+        ql = QLabel()
+        ql.setPixmap(img)
+        ql.setAlignment(Qt.AlignCenter)
+        layout.addWidget(ql)
 
 
 # =====================================================================
@@ -346,17 +341,19 @@ class MainWindow(QMainWindow):
         self.login_worker.start()
 
     def _show_qr_dialog(self, url, label="请用米游社APP扫描二维码登录"):
-        # 非模态: 不阻塞主线程, 扫码轮询在子线程继续
+        self.log(f"正在显示二维码窗口... url={url[:60]}")
         if not hasattr(self, "_qr_dialogs"):
             self._qr_dialogs = []
+        # 关闭旧对话框
+        for d in list(self._qr_dialogs):
+            if d.isVisible():
+                d.close()
+        self._qr_dialogs.clear()
+        # 创建并显示新对话框 (非模态, 不阻塞扫码轮询)
         dialog = QrCodeDialog(url, label, self)
-        dialog.setAttribute(Qt.WA_DeleteOnClose)
         dialog.show()
-        # 保持引用, 避免被垃圾回收
         self._qr_dialogs.append(dialog)
-        for d in self._qr_dialogs:
-            if not d.isVisible():
-                self._qr_dialogs.remove(d)
+        self.log(f"二维码窗口已显示 (共 {len(self._qr_dialogs)} 个)")
 
     def _on_login_ok(self, uid, stoken, mid):
         ok = self.store.add_account(f"账号{uid}", stoken, uid, mid, "官服")
