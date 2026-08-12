@@ -249,7 +249,9 @@ class QrCodeDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("mhyscan — 米哈游直播流抢码")
+        import mhycli
+
+        self.setWindowTitle(f"mhyscan v{mhycli.__version__} — 米哈游直播流抢码")
         self.resize(980, 660)
         self.setMinimumSize(860, 600)
         self.store = AccountStore(None)
