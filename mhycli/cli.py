@@ -6,6 +6,7 @@
   mhyscan add --cookie "..."        # 粘贴含 SToken 的 Cookie 注册账号
   mhyscan add --stoken S --uid U --mid M   # 直接指定 SToken/uid/mid 注册账号
   mhyscan accounts                  # 列出账号
+  mhyscan remove <uid>              # 按 uid 删除账号
   mhyscan scan bili <RID> [--acc 账号名|--uid UID]   # 监视 B站直播间抢码
   mhyscan scan douyin <RID> [...]   # 监视抖音直播间抢码
 """
@@ -234,6 +235,41 @@ def cmd_accounts(args):
             print_game_record(a, force_refresh=args.refresh)
 
 
+def cmd_qr(args):
+    """生成一个真实登录二维码 PNG (App 扫码), 供 OBS 推流测试抢码"""
+    from .api_client import MhyClient
+    from .qrcode_display import save_qr_png
+
+    client = MhyClient()
+    ok, url, ticket, msg = client.app_create_qr()
+    if not ok:
+        log(f"✘ 创建二维码失败: {msg}")
+        sys.exit(1)
+    out = args.out or "qr_test.png"
+    save_qr_png(url, out)
+    log(f"✔ 已生成登录二维码: {out}")
+    log(f"  ticket = {ticket}")
+    log(f"  url    = {url[:100]}{'...' if len(url) > 100 else ''}")
+    log()
+    log("请将该 PNG 拖入 OBS 场景并推流, 然后用本机账号抢码:")
+    log("  mhyscan scan bili <任意RID> --stream rtmp://localhost:1935/live/test")
+    log("  二维码有效期约 2-3 分钟, 需在有效期内完成识别抢码")
+
+
+def cmd_remove(args):
+    """删除账号"""
+    store = AccountStore(args.config)
+    acc = store.get_account(args.uid)
+    if acc is None:
+        log(f"未找到 uid={args.uid} 的账号 (可用 `mhyscan accounts` 查看)")
+        sys.exit(1)
+    name = acc.get("name") or "?"
+    if store.remove_account(args.uid):
+        log(f"已删除账号 {name} (uid={args.uid})")
+    else:
+        log(f"删除失败: uid={args.uid}")
+
+
 def cmd_grab(args):
     """监视直播间抢码"""
     store = AccountStore(args.config)
@@ -273,13 +309,15 @@ def cmd_grab(args):
     log("按 Ctrl+C 停止")
     log()
 
-    def progress_cb(elapsed, bytes_read, rss_kb, frame_count):
+    def progress_cb(elapsed, bytes_read, rss_kb, frame_count, dropped_frames):
         mb = bytes_read / 1024 / 1024
-        log(f"  [已等待 {elapsed:6.1f}s] 流量 {mb:7.2f} MB | 已处理 {frame_count:5d} 帧 | 内存 {rss_kb/1024:.1f} MB")
+        log(f"  [已等待 {elapsed:6.1f}s] 流量 {mb:7.2f} MB | 已处理 {frame_count:5d} 帧 | 内存 {rss_kb/1024:.1f} MB | 丢帧 {dropped_frames}")
 
     try:
         ok, ticket = grabber.grab_once(platform, args.rid, timeout=args.timeout,
-                                       progress_cb=progress_cb, log_cb=log)
+                                       progress_cb=progress_cb, log_cb=log,
+                                       retry_wait=args.retry_wait,
+                                       stream_url=args.stream)
     except KeyboardInterrupt:
         log("\n已停止")
         sys.exit(0)
@@ -304,7 +342,10 @@ mhyscan — 米哈游直播流抢码 CLI（基于 FufuLauncher 接口封装）
   2. 列出账号：
        mhyscan accounts
 
-  3. 监视直播间抢码：
+  3. 删除账号：
+       mhyscan remove <uid>                   # 按 uid 删除账号
+
+  4. 监视直播间抢码：
        mhyscan scan bili <RID> [--uid <uid>]
        mhyscan scan douyin <RID> [--uid <uid>]
 
@@ -336,6 +377,11 @@ mhyscan — 米哈游直播流抢码 CLI（基于 FufuLauncher 接口封装）
       用法:  mhyscan accounts --roles (显示游戏角色信息)
     输出账号索引、昵称、uid、类型、stoken 前8位。
 
+  remove —— 删除账号
+      用法:  mhyscan remove <uid>
+    按 uid 删除指定账号（删除后需重新 login/add 添加）。
+    未找到该 uid 时输出提示并退出，不影响其他账号。
+
   scan —— 监视直播间抢码
     从直播间直播流中识别登录二维码，识别到后用指定账号
     自动执行 scanQRLogin + confirmQRLogin 完成抢码。
@@ -345,6 +391,10 @@ mhyscan — 米哈游直播流抢码 CLI（基于 FufuLauncher 接口封装）
       --acc <名字>   指定抢码账号（按昵称匹配）
       --uid <uid>    指定抢码账号（按 uid 匹配）
       --timeout <秒> 监视超时时间，默认 180
+      --retry-wait <秒> 抢码失败后等待秒数再继续扫描，默认 0（立即继续，适合
+                二维码刷新间隔较长时降低空转，如 --retry-wait 10）
+      --stream <url>  直接拉取指定流地址，跳过直播间解析（本地 OBS 推流测试用）。
+                如 rtmp://10.10.10.10:1935/live/1，此时 <RID> 可填任意值
       --frame-skip N 抽帧间隔，默认 2（每 N+1 帧识别一次）
       --refresh      强制刷新角色信息缓存
     运行时:
@@ -362,6 +412,12 @@ mhyscan — 米哈游直播流抢码 CLI（基于 FufuLauncher 接口封装）
       B站 RID 示例: https://live.bilibili.com/123456  → RID=123456
       抖音 RID 示例: https://live.douyin.com/123456   → RID=123456
       按 Ctrl+C 可随时停止。
+    本地 OBS 推流测试 (--stream):
+      1) 启动 mediamtx: /home/sakura/bin/mediamtx (RTMP 1935/RTSP 8554)
+      2) OBS 服务器填 rtmp://<本机IP>:1935/live, 串流密钥填 1
+      3) 游戏画面展示登录二维码后运行:
+           mhyscan scan bili 0 --stream rtmp://10.10.10.10:1935/live/1
+      4) 抢到后自动退出; 需重新生成二维码再抢
 
   通用参数:
       --config <路径>  账号配置文件路径（默认 ./Config/userinfo.json）
@@ -369,12 +425,19 @@ mhyscan — 米哈游直播流抢码 CLI（基于 FufuLauncher 接口封装）
 
 三、抢码原理
 ----------------------------------------------------------------
-  直播间画面中会出现米哈游登录二维码，其 URL 形如：
-      https://user.mihoyo.com/login-platform/mobile.html?tk=<uuid>...
-  抢码流程:
-      直播流抽帧 → ZXing 识别二维码 → 提取 tk 参数 →
-      用已登录账号身份 scanQRLogin + confirmQRLogin → 抢码成功
+  直播画面中的米哈游登录二维码有两种:
+    - 游戏内二维码 (直播抢码场景):
+        https://user.mihoyo.com/qr_code_in_game.html?app_id=4&biz_key=hk4e_cn&ticket=<32位hex>...
+      属于 panda 体系 (app_id: 1=崩坏3 4=原神 8=星铁 12=绝区零)
+    - passport 登录二维码:
+        https://user.mihoyo.com/login-platform/mobile.html?tk=<uuid>...
+  游戏内二维码抢码流程 (两阶段):
+      直播流抽帧 → ZXing 识别 → 提取 ticket + app_id →
+      阶段一 panda_scan 换取 passport_qr_url →
+      阶段二 passport scanQRLogin + confirmQRLogin → 抢码成功
   说明: 抢码需要账号库中已有至少一个账号（含有效 stoken/mid）。
+       游戏内二维码属 panda 体系, 不能直接给 passport scanQRLogin
+       （会返回 -3501 二维码已失效）, 必须走 panda 两阶段。
 
 
 四、常见问题
@@ -406,7 +469,7 @@ def cmd_help(args):
                     print(section)
                     return
         print(f"未知命令: {target}")
-        print("可用命令: login / bili-login / add / accounts / scan / help")
+        print("可用命令: login / bili-login / add / accounts / remove / scan / help")
         return
     print(HELP_DOC)
 
@@ -475,12 +538,24 @@ def main():
     p_acc.add_argument("--refresh", action="store_true", help="强制刷新缓存")
     p_acc.set_defaults(fn=cmd_accounts)
 
+    p_qr = sub.add_parser("qr", help="生成登录二维码 PNG (OBS 推流测试用)")
+    p_qr.add_argument("--out", default=None, help="PNG 输出路径 (默认 qr_test.png)")
+    p_qr.set_defaults(fn=cmd_qr)
+
+    p_rm = sub.add_parser("remove", help="删除账号 (按 uid)")
+    p_rm.add_argument("uid", help="要删除的账号 uid")
+    p_rm.set_defaults(fn=cmd_remove)
+
     p_grab = sub.add_parser("scan", help="监视直播间抢码")
     p_grab.add_argument("platform", choices=["bili", "douyin"], help="直播平台")
     p_grab.add_argument("rid", help="直播间 RID (纯数字)")
     p_grab.add_argument("--acc", help="账号名")
     p_grab.add_argument("--uid", help="账号 uid")
     p_grab.add_argument("--timeout", type=float, default=180.0, help="监视超时秒数 (默认180)")
+    p_grab.add_argument("--retry-wait", type=float, default=0.0,
+                        help="抢码失败后等待秒数再继续扫描 (默认0, 立即继续)")
+    p_grab.add_argument("--stream", default=None,
+                        help="直接拉取指定流地址 (如 rtmp://localhost:1935/live/test, 本地 OBS 推流测试用)")
     p_grab.add_argument("--frame-skip", type=int, default=2, help="抽帧间隔 (默认2)")
     p_grab.add_argument("--roles", action="store_true", help="[已默认] 已默认显示角色/深渊/剧诗")
     p_grab.add_argument("--refresh", action="store_true", help="强制刷新角色信息缓存")

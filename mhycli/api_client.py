@@ -27,6 +27,17 @@ SALT_PROD = "JwYDpKvLj6MrMqqYU6jTKF17KNO2PXoS"        # passport 账号体系
 APP_ID_PASSPORT = "bll8iq97cem8"
 APP_ID_GAME = "ddxf5dufpuyo"
 
+# ---- Panda 游戏二维码抢码 (对齐 MHY_Scanner PandaScanQRCode) ----
+# 游戏内二维码 ticket 属于 panda 体系, 需先用账号调 panda scan 换取
+# passport_qr_url, 再走 passport scan/confirm 两阶段完成抢码。
+GAME_SCAN_ENDPOINTS = {
+    1: "https://api-sdk.mihoyo.com/bh3_cn/combo/panda/qrcode/scan",    # 崩坏3
+    4: "https://api-sdk.mihoyo.com/hk4e_cn/combo/panda/qrcode/scan",   # 原神
+    8: "https://api-sdk.mihoyo.com/hkrpg_cn/combo/panda/qrcode/scan",  # 星穹铁道
+    12: "https://api-sdk.mihoyo.com/nap_cn/combo/panda/qrcode/scan",   # 绝区零
+}
+BIZ_KEY_TO_APP = {"bh3_cn": 1, "hk4e_cn": 4, "hkrpg_cn": 8, "nap_cn": 12}
+
 # 端点 (来自 FufuLauncher ApiEndpoints)
 EP_PASSPORT_CREATE_QR = "https://passport-api.mihoyo.com/account/ma-cn-passport/web/createQRLogin"
 EP_PASSPORT_SCAN_QR = "https://passport-api.mihoyo.com/account/ma-cn-passport/app/scanQRLogin"
@@ -325,9 +336,11 @@ class MhyClient:
             pass
         return ""
 
-    def simulate_app_action(self, url: str, ticket: str, auth_cookie: str) -> bool:
+    def simulate_app_action(self, url: str, ticket: str, auth_cookie: str) -> tuple[int, str]:
         """SimulateAppActionAsync: scanQRLogin / confirmQRLogin
         body = {ticket, token_types:["4"]}, Cookie = stoken=..; mid=..
+        返回 (retcode, message); retcode==0 成功
+        常见错误码: -100 登录状态失效(stoken 无效), -3501 二维码已失效
         """
         body = {"ticket": ticket, "token_types": ["4"]}
         body_str = json.dumps(body)
@@ -335,9 +348,97 @@ class MhyClient:
         try:
             r = self.session.post(url, data=body_str, headers=headers, timeout=15)
             result = r.json()
-            return result.get("retcode") == 0
-        except Exception:
-            return False
+            return result.get("retcode", -1), result.get("message", "")
+        except Exception as e:
+            return -2, str(e)[:50]
+
+    @staticmethod
+    def _passport_qr_param(qr_url: str, key: str, terminators: str = "&") -> str:
+        """从 passport 二维码 URL 提取参数 (对齐 C++ getPassportQRParam)
+
+        示例: ...mobile.html?app_id=..&tk=<uuid>&token_types=1#/login/qr
+          tk 参数以 & 结尾, token_types 以 # 结尾
+        """
+        needle = key + "="
+        begin = qr_url.find(needle)
+        if begin == -1:
+            return ""
+        value_begin = begin + len(needle)
+        value_end = len(qr_url)
+        for t in terminators:
+            idx = qr_url.find(t, value_begin)
+            if idx != -1:
+                value_end = idx
+                break
+        return qr_url[value_begin:value_end]
+
+    def panda_scan_qrcode(self, ticket: str, app_id: int, biz_key: str = "") -> tuple[int, str, str]:
+        """Panda 扫码 (抢码阶段一, 对齐 C++ PandaScanQRCode)
+
+        游戏内二维码 ticket 属于 panda 体系, 不能直接给 passport scanQRLogin。
+        需用已登录账号向游戏 scan 端点发扫码请求, 换取 passport_qr_url,
+        供阶段二 (passport scan/confirm) 完成抢码。
+
+        body: {passport_app_id, ticket, app_id, device, ts}
+        headers: 必须带 x-rpc-app_id + x-rpc-device_id (对齐 C++)
+        返回 (retcode, passport_qr_url, message)
+        """
+        scan_url = GAME_SCAN_ENDPOINTS.get(int(app_id))
+        if not scan_url and biz_key:
+            scan_url = f"https://api-sdk.mihoyo.com/{biz_key}/combo/panda/qrcode/scan"
+        if not scan_url:
+            return -1, "", f"未知 app_id={app_id}"
+        device = self.device_id.lower()
+        body = {
+            "passport_app_id": APP_ID_PASSPORT,
+            "ticket": ticket,
+            "app_id": int(app_id),
+            "device": device,
+            "ts": int(time.time()),
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "x-rpc-app_id": APP_ID_PASSPORT,
+            "x-rpc-device_id": self.device_id,
+        }
+        try:
+            r = self.session.post(scan_url, data=json.dumps(body), headers=headers, timeout=15)
+            result = r.json()
+            rc = result.get("retcode", -1)
+            if rc == 0:
+                pqr = result.get("data", {}).get("passport_qr_url", "")
+                return 0, pqr, ""
+            return rc, "", result.get("message", "")
+        except Exception as e:
+            return -2, "", str(e)[:50]
+
+    def passport_qr_scan(self, passport_qr_url: str, stoken: str, mid: str,
+                         confirm: bool = False) -> tuple[int, str]:
+        """passport 扫码/确认 (抢码阶段二, 对齐 C++ PassportQRCodeLogin)
+
+        从 passport_qr_url 提取 tk + token_types (动态), 用账号 stoken/mid
+        Cookie 模拟手机扫码/确认。token_types 不能固定写死, 否则 retcode=-502。
+        返回 (retcode, message)
+        """
+        ticket = (self._passport_qr_param(passport_qr_url, "tk", "&")
+                  or self._passport_qr_param(passport_qr_url, "ticket", "&"))
+        token_types = self._passport_qr_param(passport_qr_url, "token_types", "#")
+        if not ticket or not token_types:
+            return -1, f"缺少 tk({ticket!r}) 或 token_types({token_types!r})"
+        body = {"ticket": ticket, "token_types": [token_types]}
+        url = EP_PASSPORT_CONFIRM_QR if confirm else EP_PASSPORT_SCAN_QR
+        headers = {
+            "Content-Type": "application/json",
+            "x-rpc-app_id": APP_ID_PASSPORT,
+            "x-rpc-device_id": self.device_id,
+            "Cookie": f"stoken={stoken}; mid={mid}",
+        }
+        try:
+            r = self.session.post(url, data=json.dumps(body), headers=headers, timeout=15)
+            result = r.json()
+            return result.get("retcode", -1), result.get("message", "")
+        except Exception as e:
+            return -2, str(e)[:50]
 
     def get_web_qr_status_and_cookies(self, ticket: str) -> dict | None:
         """GetWebQrStatusAndExtractCookiesAsync: 查询状态并从 Set-Cookie 提取 cookie"""
@@ -381,10 +482,12 @@ class MhyClient:
             return None
 
         auth_cookie = f"stoken={stoken}; mid={mid}"
-        if not self.simulate_app_action(EP_PASSPORT_SCAN_QR, web_ticket, auth_cookie):
+        rc, _ = self.simulate_app_action(EP_PASSPORT_SCAN_QR, web_ticket, auth_cookie)
+        if rc != 0:
             return None
         time.sleep(1)
-        if not self.simulate_app_action(EP_PASSPORT_CONFIRM_QR, web_ticket, auth_cookie):
+        rc, _ = self.simulate_app_action(EP_PASSPORT_CONFIRM_QR, web_ticket, auth_cookie)
+        if rc != 0:
             return None
 
         v2 = self.get_web_qr_status_and_cookies(web_ticket)

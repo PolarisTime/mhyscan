@@ -1,14 +1,18 @@
-# mhyscan 1.0.0 — 发布说明
+# mhyscan v1.3.0 — 发布说明
 
 米哈游直播流抢码工具 (PySide6 图形界面 + CLI)
 
 ## 功能
 - 米游社 App 扫码登录 (新一代 passport 接口)
 - B站扫码登录 (TV端接口, 保存拉流凭证)
-- 多账号管理 (Cookie/SToken 导入, userinfo.json)
-- 直播间抢码: B站/抖音直播流 → 二维码识别 → 自动 scanQRLogin + confirmQRLogin
+- 多账号管理 (Cookie/SToken 导入, userinfo.json, `remove <uid>` 删除账号)
+- 直播间抢码: B站/抖音直播流 → 二维码识别 → 自动抢码登录
+- **Panda 两阶段抢码** (v1.3.0): 游戏内二维码 → panda_scan 换 passport_qr_url → passport scan/confirm
+  (修复: 游戏二维码此前直接走 passport scanQRLogin 返回 -3501, 抢码必失败)
+- 每个二维码仅抢一次 (去重), 抢码失败可指定冷却等待 `--retry-wait`
+- `--stream <url>` 支持直接拉本地流 (OBS + mediamtx 推流测试)
 - 游戏角色信息显示 (7 天缓存)
-- 低延迟拉流 + 每 3 秒进度日志 (上海时区时间戳)
+- 低延迟拉流 + 进度日志 (上海时区时间戳)
 
 ## 打包
 

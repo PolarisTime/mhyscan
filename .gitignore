@@ -4,6 +4,8 @@
 login_qrcode.png
 bili_login_qrcode.png
 qr_login.png
+auto.crt
+auto.key
 
 # ===== Python =====
 __pycache__/

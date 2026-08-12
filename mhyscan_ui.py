@@ -161,7 +161,7 @@ class RolesWorker(QThread):
 # =====================================================================
 class ScanWorker(QThread):
     log = Signal(str)
-    metrics = Signal(float, int, int, int)  # elapsed, bytes, rss_kb, frames
+    metrics = Signal(float, int, int, int, int)  # elapsed, bytes, rss_kb, frames, dropped
     finished = Signal(bool, str)
 
     def __init__(self, client, stoken, mid, platform, rid, timeout, parent=None):
@@ -190,11 +190,11 @@ class ScanWorker(QThread):
         except Exception as e:
             self.finished.emit(False, str(e))
 
-    def _progress(self, elapsed, bytes_read, rss_kb, frame_count):
+    def _progress(self, elapsed, bytes_read, rss_kb, frame_count, dropped_frames):
         mb = bytes_read / 1024 / 1024
         self.log.emit(f"  [已等待 {elapsed:6.1f}s] 流量 {mb:6.2f} MB | "
-                      f"帧 {frame_count:5d} | 内存 {rss_kb/1024:.1f} MB")
-        self.metrics.emit(elapsed, bytes_read, rss_kb, frame_count)
+                      f"帧 {frame_count:5d} | 内存 {rss_kb/1024:.1f} MB | 丢帧 {dropped_frames}")
+        self.metrics.emit(elapsed, bytes_read, rss_kb, frame_count, dropped_frames)
 
     def stop(self):
         self._stopped = True
@@ -706,10 +706,10 @@ class MainWindow(QMainWindow):
         self.footer_dot.set_status(status, pulse=pulse)
         self.footer_text.setText(text)
 
-    def _on_scan_metrics(self, elapsed, bytes_read, rss_kb, frame_count):
+    def _on_scan_metrics(self, elapsed, bytes_read, rss_kb, frame_count, dropped_frames):
         mb = bytes_read / 1024 / 1024
         self.footer_metrics.setText(
-            f"流量 {mb:.2f} MB · 帧 {frame_count} · 内存 {rss_kb/1024:.1f} MB · 已等待 {elapsed:.0f}s")
+            f"流量 {mb:.2f} MB · 帧 {frame_count} · 内存 {rss_kb/1024:.1f} MB · 丢帧 {dropped_frames} · 已等待 {elapsed:.0f}s")
 
     def _on_roles_result(self, text):
         if text:

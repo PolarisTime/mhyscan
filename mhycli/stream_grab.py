@@ -30,7 +30,9 @@ QR_URL_MARKERS = ("mihoyo.com", "hoyolab.com", "login-platform")
 # 抽帧间隔: 每 N 帧识别一次
 FRAME_SKIP = 2
 # 进度日志间隔 (秒)
-PROGRESS_INTERVAL = 3.0
+PROGRESS_INTERVAL = 1.0
+# 丢帧判定: 相邻帧 pts 间隔超过正常帧间隔的倍数即视为丢帧
+DROP_RATIO = 1.5
 
 
 def extract_ticket_from_url(url: str) -> str | None:
@@ -146,7 +148,8 @@ class LiveStreamGrabber:
 
     def grab_once(self, platform: live_link.LivePlatform, room_id: str,
                   timeout: float = 180.0, progress_cb=None, log_cb=print,
-                  stream_url: str | None = None) -> tuple[bool, str]:
+                  stream_url: str | None = None,
+                  retry_wait: float = 0.0) -> tuple[bool, str]:
         """抢一次码: 拉流 → 识别 → 抢码, 成功返回 (True, ticket)
 
         Args:
@@ -157,6 +160,7 @@ class LiveStreamGrabber:
                          progress_cb(elapsed, bytes_read, rss_kb, frame_count)
             log_cb: 步骤日志回调, 默认 print
             stream_url: 可选, 直接拉取指定流地址 (如 rtmp://.., 用于 OBS 推流测试)
+            retry_wait: 抢码失败后等待秒数再继续扫描 (冷却, 避免空转抽帧)
         """
         if stream_url:
             # [步骤1] 直接使用指定流地址
@@ -196,6 +200,23 @@ class LiveStreamGrabber:
         frame_idx = 0
         bytes_read = 0
         last_progress = start
+        # 已尝试过抢码的 ticket 去重: 每个二维码仅尝试一次扫码抢码,
+        # 失败不重试, 避免直播画面中二维码停留期间对同一 ticket 高频请求
+        attempted: set[str] = set()
+        # 丢帧检测: 基于 pts 时间戳间隔
+        dropped_frames = 0
+        last_pts: float | None = None
+        frame_interval = 0.0  # 正常帧间隔 (秒)
+        try:
+            # 尝试从流帧率计算正常帧间隔
+            fps = float(video.average_rate) if video.average_rate else 0.0
+            if fps and fps > 0:
+                frame_interval = 1.0 / fps
+            if video.codec_context.framerate and video.codec_context.framerate > 0:
+                frame_interval = 1.0 / float(video.codec_context.framerate)
+        except Exception:
+            pass
+
         try:
             # [步骤3] 循环读取帧并识别
             log_cb("[3/5] 开始监视直播流, 识别登录二维码中...")
@@ -207,11 +228,25 @@ class LiveStreamGrabber:
                 if now - start > timeout:
                     return False, "超时未识别到二维码"
                 if progress_cb and now - last_progress >= PROGRESS_INTERVAL:
-                    progress_cb(now - start, bytes_read, _rss_kb(), frame_idx)
+                    progress_cb(now - start, bytes_read, _rss_kb(), frame_idx, dropped_frames)
                     last_progress = now
 
                 for frame in packet.decode():
                     frame_idx += 1
+                    # 丢帧检测: 比较 pts 时间戳间隔
+                    pts = frame.pts
+                    if pts is not None and frame_interval > 0:
+                        try:
+                            pts_sec = float(pts) * float(frame.time_base)
+                        except (AttributeError, TypeError):
+                            pts_sec = None
+                        if pts_sec is not None:
+                            if last_pts is not None and pts_sec > last_pts:
+                                gap = pts_sec - last_pts
+                                if gap > frame_interval * DROP_RATIO:
+                                    dropped_frames += int(round(gap / frame_interval)) - 1
+                            last_pts = pts_sec
+
                     if frame_idx % (self.frame_skip + 1) != 0:
                         continue
 
@@ -225,16 +260,25 @@ class LiveStreamGrabber:
                     if not ticket:
                         log_cb("      → 识别到二维码但无法提取 ticket, 跳过")
                         continue
+                    if ticket in attempted:
+                        # 已抢过一次的二维码: 静默跳过, 等主播刷新出新二维码
+                        continue
+                    attempted.add(ticket)
                     log_cb(f"[4/5] 识别到登录二维码! ticket={ticket}")
+                    log_cb("      → 该二维码仅执行一次扫码抢码, 失败不重试")
 
-                    # [步骤5] 抢码登录 (scan + confirm)
+                    # [步骤5] 抢码登录 (两阶段: panda scan → passport scan/confirm)
                     log_cb("[5/5] 调用 scanQRLogin + confirmQRLogin 抢码...")
-                    ok = steal_qr_login(self.client, ticket, self.stoken, self.mid,
+                    ok = steal_qr_login(self.client, text, self.stoken, self.mid,
                                         log_cb=log_cb)
                     if ok:
                         log_cb("      → 抢码登录成功!")
                         return True, ticket
-                    log_cb("      → 抢码失败, 继续监视")
+                    if retry_wait > 0:
+                        log_cb(f"      → 抢码失败, 等待 {retry_wait:.0f}s 后继续扫描...")
+                        time.sleep(retry_wait)
+                    else:
+                        log_cb("      → 抢码失败, 等待主播刷新新二维码...")
         except KeyboardInterrupt:
             pass
         except Exception as e:
