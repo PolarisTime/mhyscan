@@ -145,7 +145,8 @@ class LiveStreamGrabber:
         self._stop = True
 
     def grab_once(self, platform: live_link.LivePlatform, room_id: str,
-                  timeout: float = 180.0, progress_cb=None, log_cb=print) -> tuple[bool, str]:
+                  timeout: float = 180.0, progress_cb=None, log_cb=print,
+                  stream_url: str | None = None) -> tuple[bool, str]:
         """抢一次码: 拉流 → 识别 → 抢码, 成功返回 (True, ticket)
 
         Args:
@@ -155,25 +156,35 @@ class LiveStreamGrabber:
             progress_cb: 可选回调, 每 PROGRESS_INTERVAL 秒调用一次,
                          progress_cb(elapsed, bytes_read, rss_kb, frame_count)
             log_cb: 步骤日志回调, 默认 print
+            stream_url: 可选, 直接拉取指定流地址 (如 rtmp://.., 用于 OBS 推流测试)
         """
-        # [步骤1] 获取直播流地址
-        log_cb(f"[1/5] 获取直播间 {room_id} 的直播流地址...")
-        info = live_link.get_live_info(platform, room_id)
-        if info.status != live_link.LiveStreamStatus.Normal:
-            msg = STREAM_STATUS_MESSAGE.get(info.status, f"直播流获取失败: {info.status.name}")
-            return False, msg
-        stream_url = info.link
-        log_cb(f"      → 获取成功: {stream_url[:90]}...")
+        if stream_url:
+            # [步骤1] 直接使用指定流地址
+            log_cb(f"[1/5] 使用指定流地址: {stream_url[:90]}...")
+            stream_url_final = stream_url
+        else:
+            # [步骤1] 获取直播流地址
+            log_cb(f"[1/5] 获取直播间 {room_id} 的直播流地址...")
+            info = live_link.get_live_info(platform, room_id)
+            if info.status != live_link.LiveStreamStatus.Normal:
+                msg = STREAM_STATUS_MESSAGE.get(info.status, f"直播流获取失败: {info.status.name}")
+                return False, msg
+            stream_url_final = info.link
+            log_cb(f"      → 获取成功: {stream_url_final[:90]}...")
 
         # [步骤2] 打开直播流 (低延迟)
         log_cb("[2/5] 打开直播流 (低延迟模式)...")
         headers = _stream_headers(platform)
         options = {}
-        if headers:
+        # RTMP/RTSP 等自定义流不需要 HTTP headers
+        if headers and not stream_url_final.lower().startswith(("rtmp://", "rtsp://", "srt://")):
             options["headers"] = "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n"
+        # RTMP 直播流需要 rtmp_live 选项 (避免卡在读首帧)
+        if stream_url_final.lower().startswith("rtmp://"):
+            options["rtmp_live"] = "live"
         options.update(_low_delay_options())
         try:
-            container = av.open(stream_url, options=options, timeout=15)
+            container = av.open(stream_url_final, options=options, timeout=15)
             video = container.streams.video[0]
             w = video.codec_context.width
             h = video.codec_context.height
