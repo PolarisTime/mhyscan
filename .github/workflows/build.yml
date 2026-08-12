@@ -56,13 +56,20 @@ jobs:
           name: mhyscan_ui-windows
           path: dist/mhyscan_ui
 
-      - name: Create zip
+      - name: Create versioned zip
         shell: bash
         run: |
-          cd dist && zip -r mhyscan_ui-windows.zip mhyscan_ui
+          # 版本号取自 tag (如 v1.0.1 → mhyscan_ui-v1.0.1-windows.zip)
+          VERSION="${{ github.ref_name }}"
+          echo "版本号: ${VERSION}"
+          cd dist
+          ZIP_NAME="mhyscan_ui-${VERSION}-windows.zip"
+          zip -r "${ZIP_NAME}" mhyscan_ui
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+          echo "生成: ${ZIP_NAME}"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/mhyscan_ui-windows.zip
+          files: dist/mhyscan_ui-${{ github.ref_name }}-windows.zip
           generate_release_notes: true
