@@ -39,6 +39,9 @@ a = Analysis(
         # 二维码生成
         'qrcode',
         'qrcode.image.pil',
+        # 自定义 UI 模块
+        'mhycli.theme',
+        'mhycli.status_dot',
     ],
     hookspath=[],
     hooksconfig={},

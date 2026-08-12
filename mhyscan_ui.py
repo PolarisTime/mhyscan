@@ -23,12 +23,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QFont, QPainter, QPixmap
+from PySide6.QtCore import Qt, QThread, Signal, QRectF
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QTextCursor, QTextCharFormat, QTextBlockFormat
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QLineEdit, QComboBox, QListWidget,
-    QPlainTextEdit, QDialog, QGridLayout, QFrame,
+    QPlainTextEdit, QDialog, QGridLayout, QFrame, QSplitter,
+    QFormLayout, QSpinBox, QProgressBar, QCheckBox, QListWidgetItem,
 )
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -39,7 +40,9 @@ from mhycli.cookie_import import CookieParseError, extract_account_from_cookie
 from mhycli.game_record import GameRecordClient, format_roles
 from mhycli.live_link import LivePlatform
 from mhycli.qr_login import app_qr_login
+from mhycli.status_dot import StatusDot, COLORS as DOT_COLORS
 from mhycli.stream_grab import LiveStreamGrabber
+from mhycli.theme import QSS, LOG_COLORS
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -158,6 +161,7 @@ class RolesWorker(QThread):
 # =====================================================================
 class ScanWorker(QThread):
     log = Signal(str)
+    metrics = Signal(float, int, int, int)  # elapsed, bytes, rss_kb, frames
     finished = Signal(bool, str)
 
     def __init__(self, client, stoken, mid, platform, rid, timeout, parent=None):
@@ -190,6 +194,7 @@ class ScanWorker(QThread):
         mb = bytes_read / 1024 / 1024
         self.log.emit(f"  [已等待 {elapsed:6.1f}s] 流量 {mb:6.2f} MB | "
                       f"帧 {frame_count:5d} | 内存 {rss_kb/1024:.1f} MB")
+        self.metrics.emit(elapsed, bytes_read, rss_kb, frame_count)
 
     def stop(self):
         self._stopped = True
@@ -206,9 +211,11 @@ class QrCodeDialog(QDialog):
         self.setWindowTitle("扫码登录")
         # 关键: 必须非模态。setModal(True)+show() 在 Windows 上不显示 (模态需 exec())
         self.setModal(False)
+        self.setObjectName("card")
         self.resize(360, 440)
         layout = QVBoxLayout(self)
-        lbl = QLabel(label)
+        layout.setContentsMargins(16, 16, 16, 16)
+        lbl = QLabel(label, objectName="cardTitle")
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
         # 内存中生成二维码图片 (不依赖写文件, 打包后目录只读也可用)
@@ -243,7 +250,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("mhyscan — 米哈游直播流抢码")
-        self.resize(760, 640)
+        self.resize(980, 660)
+        self.setMinimumSize(860, 600)
         self.store = AccountStore(None)
         self.login_worker = None
         self.bili_worker = None
@@ -253,159 +261,295 @@ class MainWindow(QMainWindow):
 
     # ---- UI 构建 ----
     def _build_ui(self):
-        central = QWidget()
+        central = QWidget(objectName="central")
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        # ===== 账号管理区 =====
-        acc_frame = QFrame()
-        acc_frame.setFrameShape(QFrame.StyledPanel)
-        acc_layout = QVBoxLayout(acc_frame)
-        root.addWidget(acc_frame)
+        # ===== 头部 =====
+        header = QFrame(objectName="header")
+        header.setFixedHeight(56)
+        h = QHBoxLayout(header)
+        h.setContentsMargins(16, 8, 16, 8)
+        h.setSpacing(10)
 
-        acc_title = QLabel("账号管理")
-        acc_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        acc_layout.addWidget(acc_title)
+        logo = QLabel("M", objectName="logo")
+        logo.setFixedSize(34, 34)
+        logo.setAlignment(Qt.AlignCenter)
+        h.addWidget(logo)
 
-        # 第一行: 米游社账号按钮
+        title = QLabel("mhyscan · 米哈游直播流抢码", objectName="appTitle")
+        h.addWidget(title)
+        h.addStretch()
+
+        # B站徽章
+        self.badge = QFrame(objectName="badge")
+        bh = QHBoxLayout(self.badge)
+        bh.setContentsMargins(8, 3, 8, 3)
+        bh.setSpacing(6)
+        self.bili_dot = StatusDot("idle")
+        self.bili_badge_text = QLabel("检测中", objectName="badgeText")
+        bh.addWidget(self.bili_dot)
+        bh.addWidget(self.bili_badge_text)
+        h.addWidget(self.badge)
+
+        self.btn_bili_login = QPushButton("登录", objectName="biliLogin")
+        self.btn_bili_login.setProperty("ghost", True)
+        self.btn_bili_logout = QPushButton("退出", objectName="biliLogout")
+        self.btn_bili_logout.setProperty("ghost", True)
+        h.addWidget(self.btn_bili_login)
+        h.addWidget(self.btn_bili_logout)
+
+        self.header_meta = QLabel("账号 0", objectName="headerMeta")
+        h.addWidget(self.header_meta)
+
+        version = QLabel(f"v{__import__('mhycli').__version__}", objectName="appVersion")
+        h.addWidget(version)
+        root.addWidget(header)
+
+        # ===== 主体: 左卡片 + 右日志 =====
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setHandleWidth(1)
+        root.addWidget(splitter, 1)
+
+        left = QWidget(objectName="leftPanel")
+        left.setMinimumWidth(300)
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(12, 12, 6, 12)
+        ll.setSpacing(12)
+
+        # -- 账号管理卡 --
+        acc_card = QFrame(objectName="card")
+        al = QVBoxLayout(acc_card)
+        al.setContentsMargins(14, 14, 14, 14)
+        al.setSpacing(10)
+
+        acc_title = QLabel("账号管理", objectName="cardTitle")
+        al.addWidget(acc_title)
+        acc_sub = QLabel("管理多个账号", objectName="cardSub")
+        al.addWidget(acc_sub)
+
         btn_row = QHBoxLayout()
-        self.btn_login = QPushButton("米游社扫码登录")
+        btn_row.setSpacing(8)
+        self.btn_login = QPushButton("扫码登录")
+        self.btn_login.setProperty("primary", True)
         self.btn_add = QPushButton("添加Cookie")
-        self.btn_refresh = QPushButton("刷新")
-        for b in (self.btn_login, self.btn_add, self.btn_refresh):
-            btn_row.addWidget(b)
+        btn_row.addWidget(self.btn_login)
+        btn_row.addWidget(self.btn_add)
         btn_row.addStretch()
-        acc_layout.addLayout(btn_row)
+        al.addLayout(btn_row)
 
-        # 第二行: B站登录状态
-        bili_row = QHBoxLayout()
-        bili_row.addWidget(QLabel("B站凭证:"))
-        self.bili_status_label = QLabel("检测中...")
-        self.bili_status_label.setStyleSheet("font-weight: bold;")
-        bili_row.addWidget(self.bili_status_label)
-        self.btn_bili = QPushButton("B站扫码登录")
-        self.btn_bili_logout = QPushButton("退出B站")
-        self.btn_bili_logout.setEnabled(False)
-        bili_row.addWidget(self.btn_bili)
-        bili_row.addWidget(self.btn_bili_logout)
-        bili_row.addStretch()
-        acc_layout.addLayout(bili_row)
+        self.account_list = QListWidget(objectName="accountList")
+        self.account_list.setSizePolicy(self.account_list.sizePolicy().horizontalPolicy(),
+                                        self.account_list.sizePolicy().verticalPolicy())
+        al.addWidget(self.account_list, 1)
 
-        # 账号列表
-        self.account_list = QListWidget()
-        self.account_list.setFixedHeight(110)
-        acc_layout.addWidget(self.account_list)
+        acc_hint = QLabel("将使用选中账号进行抢码", objectName="cardSub")
+        al.addWidget(acc_hint)
+        ll.addWidget(acc_card, 1)
 
-        # ===== 直播间抢码设置区 =====
-        scan_frame = QFrame()
-        scan_frame.setFrameShape(QFrame.StyledPanel)
-        scan_layout = QGridLayout(scan_frame)
-        root.addWidget(scan_frame)
+        # -- 抢码设置卡 --
+        scan_card = QFrame(objectName="card")
+        sl = QVBoxLayout(scan_card)
+        sl.setContentsMargins(14, 14, 14, 14)
+        sl.setSpacing(12)
 
-        scan_title = QLabel("直播间抢码")
-        scan_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        scan_layout.addWidget(scan_title, 0, 0, 1, 6)
+        scan_title = QLabel("抢码设置", objectName="cardTitle")
+        sl.addWidget(scan_title)
 
-        # 第1行: 平台 / RID
-        scan_layout.addWidget(QLabel("平台:"), 1, 0)
+        form = QFormLayout()
+        form.setSpacing(8)
         self.platform_combo = QComboBox()
         self.platform_combo.addItem("B站", LivePlatform.BiliBili)
         self.platform_combo.addItem("抖音", LivePlatform.Douyin)
-        scan_layout.addWidget(self.platform_combo, 1, 1)
-
-        scan_layout.addWidget(QLabel("RID:"), 1, 2)
+        form.addRow("平台", self.platform_combo)
         self.rid_edit = QLineEdit()
         self.rid_edit.setPlaceholderText("直播间房间号 (纯数字)")
-        scan_layout.addWidget(self.rid_edit, 1, 3)
+        form.addRow("房间RID", self.rid_edit)
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(10, 3600)
+        self.timeout_spin.setValue(180)
+        self.timeout_spin.setSuffix(" s")
+        form.addRow("超时", self.timeout_spin)
+        sl.addLayout(form)
 
-        scan_layout.addWidget(QLabel("超时(秒):"), 1, 4)
-        self.timeout_edit = QLineEdit("180")
-        self.timeout_edit.setFixedWidth(60)
-        scan_layout.addWidget(self.timeout_edit, 1, 5)
-
-        # 第2行: 按钮 + 状态
         self.btn_scan = QPushButton("开始扫描")
+        self.btn_scan.setProperty("primary", True)
+        self.btn_scan.setMinimumHeight(40)
+        sl.addWidget(self.btn_scan)
+
+        # 扫描进度条 (3px 无限循环, 默认隐藏)
+        self.scan_progress = QProgressBar(objectName="scanProgress")
+        self.scan_progress.setFixedHeight(3)
+        self.scan_progress.setTextVisible(False)
+        self.scan_progress.hide()
+        sl.addWidget(self.scan_progress)
+
+        # 扫描状态 (状态灯 + 文字 + 停止按钮)
+        scan_status_row = QHBoxLayout()
+        scan_status_row.setSpacing(6)
+        self.scan_dot = StatusDot("idle")
+        self.scan_status_label = QLabel("就绪")
+        self.scan_status_label.setStyleSheet(f"color: {DOT_COLORS['idle']};")
+        scan_status_row.addWidget(self.scan_dot)
+        scan_status_row.addWidget(self.scan_status_label)
+        scan_status_row.addStretch()
         self.btn_stop = QPushButton("停止")
+        self.btn_stop.setProperty("danger", True)
         self.btn_stop.setEnabled(False)
-        scan_layout.addWidget(self.btn_scan, 2, 0)
-        scan_layout.addWidget(self.btn_stop, 2, 1)
-        scan_layout.setColumnStretch(2, 1)
+        scan_status_row.addWidget(self.btn_stop)
+        sl.addLayout(scan_status_row)
 
-        self.status_label = QLabel("就绪")
-        self.status_label.setStyleSheet("color: #666;")
-        scan_layout.addWidget(self.status_label, 2, 3, 1, 3)
+        ll.addWidget(scan_card)
+        splitter.addWidget(left)
 
-        # ===== 日志区 =====
-        log_frame = QFrame()
-        log_frame.setFrameShape(QFrame.StyledPanel)
-        log_layout = QVBoxLayout(log_frame)
-        root.addWidget(log_frame)
+        # -- 日志卡 --
+        log_card = QFrame(objectName="card")
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(14, 14, 14, 14)
+        log_layout.setSpacing(8)
 
-        log_title = QLabel("日志")
-        log_title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        log_layout.addWidget(log_title)
+        log_top = QHBoxLayout()
+        log_title = QLabel("运行日志", objectName="cardTitle")
+        log_top.addWidget(log_title)
+        log_top.addStretch()
+        self.btn_clear = QPushButton("清空")
+        self.btn_clear.setProperty("ghost", True)
+        self.auto_scroll = QCheckBox("跟随滚动")
+        self.auto_scroll.setChecked(True)
+        self.auto_scroll.setStyleSheet(f"color: {DOT_COLORS['idle']};")
+        log_top.addWidget(self.btn_clear)
+        log_top.addWidget(self.auto_scroll)
+        log_layout.addLayout(log_top)
 
-        self.log_view = QPlainTextEdit()
+        self.log_view = QPlainTextEdit(objectName="logView")
         self.log_view.setReadOnly(True)
-        self.log_view.setFont(QFont("Consolas", 10))
-        log_layout.addWidget(self.log_view)
+        log_layout.addWidget(self.log_view, 1)
+        splitter.addWidget(log_card)
+
+        splitter.setSizes([340, 640])
+
+        # ===== 底部状态栏 =====
+        footer = QFrame(objectName="footer")
+        footer.setFixedHeight(28)
+        fh = QHBoxLayout(footer)
+        fh.setContentsMargins(14, 0, 14, 0)
+        fh.setSpacing(8)
+        self.footer_dot = StatusDot("idle")
+        self.footer_text = QLabel("就绪", objectName="footerText")
+        fh.addWidget(self.footer_dot)
+        fh.addWidget(self.footer_text)
+        fh.addStretch()
+        self.footer_metrics = QLabel("流量 0.0 MB · 帧 0 · 内存 0 MB · 已等待 0s", objectName="footerText")
+        fh.addWidget(self.footer_metrics)
+        root.addWidget(footer)
 
         # ---- 信号连接 ----
         self.btn_login.clicked.connect(self.on_login)
-        self.btn_bili.clicked.connect(self.on_bili_login)
+        self.btn_bili_login.clicked.connect(self.on_bili_login)
         self.btn_bili_logout.clicked.connect(self.on_bili_logout)
         self.btn_add.clicked.connect(self.on_add_cookie)
-        self.btn_refresh.clicked.connect(self.refresh_accounts)
         self.btn_scan.clicked.connect(self.on_scan)
         self.btn_stop.clicked.connect(self.on_stop)
+        self.btn_clear.clicked.connect(self.log_view.clear)
+        self.account_list.currentRowChanged.connect(lambda _: self.refresh_footer_account())
 
-        # 初始刷新 B站状态
+        # 初始刷新
+        self.refresh_accounts()
         self.refresh_bili_status()
 
-    # ---- 日志 ----
+    # ---- 底部账号元信息 ----
+    def refresh_footer_account(self):
+        accs = self.store.list_accounts()
+        self.header_meta.setText(f"账号 {len(accs)}")
+
+    def _set_invalid(self, widget, invalid: bool):
+        widget.setProperty("invalid", invalid)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
+    # ---- 日志 (分级上色) ----
     def log(self, msg: str = ""):
         # 上海时区; 打包环境缺 tzdata 时回退系统本地时间, 避免崩溃
         try:
             from datetime import datetime
             from zoneinfo import ZoneInfo
 
-            ts = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y年%m月%d日 %H:%M:%S")
+            ts = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%H:%M:%S")
         except Exception:
             from datetime import datetime
 
-            ts = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
-        self.log_view.appendPlainText(f"[{ts}] {msg}")
-        self.log_view.verticalScrollBar().setValue(
-            self.log_view.verticalScrollBar().maximum())
+            ts = datetime.now().strftime("%H:%M:%S")
+
+        # 按前缀推断级别 (兼容现有所有 log() 调用)
+        if msg.startswith("✔"):
+            lvl = "success"
+        elif msg.startswith("✘") or msg.startswith("⚠"):
+            lvl = "error"
+        elif msg.strip().startswith("[已等待") or msg.strip().startswith("[1/5]"):
+            lvl = "progress"
+        else:
+            lvl = "info"
+
+        cursor = self.log_view.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        # 时间戳 (弱色)
+        tf = QTextCharFormat()
+        tf.setForeground(QColor(LOG_COLORS["time"]))
+        cursor.insertText(f"[{ts}] ", tf)
+        # 消息 (按级别)
+        mf = QTextCharFormat()
+        mf.setForeground(QColor(LOG_COLORS[lvl]))
+        cursor.insertText(msg, mf)
+        # 行高 130%
+        bf = QTextBlockFormat()
+        bf.setLineHeight(130.0, QTextBlockFormat.ProportionalHeight.value)
+        cursor.insertBlock(bf)
+        if self.auto_scroll.isChecked():
+            sb = self.log_view.verticalScrollBar()
+            sb.setValue(sb.maximum())
 
     # ---- 账号 ----
     def refresh_accounts(self):
         self.account_list.clear()
         accs = self.store.list_accounts()
         for i, a in enumerate(accs):
-            self.account_list.addItem(
-                f"[{i}] {a.get('name') or '?'}  uid={a.get('uid')}  "
-                f"stoken={str(a.get('access_key'))[:8]}...")
+            item = QListWidgetItem(
+                f"{'◈' if i == self.store.data.get('last_account', 0) else '  '} "
+                f"{a.get('name') or '?'}  uid={a.get('uid')}")
+            item.setToolTip(f"stoken={str(a.get('access_key'))[:12]}...  type={a.get('type')}")
+            self.account_list.addItem(item)
+        self.refresh_footer_account()
 
-    # ---- B站登录状态 ----
+    # ---- B站登录状态 (头部徽章) ----
     def refresh_bili_status(self):
-        """检测 B站 cookie 状态并更新 UI 徽章 (强制刷新进程缓存)"""
+        """检测 B站 cookie 状态并更新头部徽章 (强制刷新进程缓存)"""
         from mhycli.live_link import get_bili_cookie
 
         cookie = get_bili_cookie(force_refresh=True)
         if cookie:
-            self.bili_status_label.setText("✔ 已登录")
-            self.bili_status_label.setStyleSheet("color: green; font-weight: bold;")
-            self.btn_bili_logout.setEnabled(True)
+            self.bili_dot.set_status("ok")
+            self.bili_badge_text.setText("已登录")
+            self.bili_badge_text.setStyleSheet(f"color: {DOT_COLORS['ok']};")
+            self.btn_bili_login.hide()
+            self.btn_bili_logout.show()
             self.log("B站凭证: 已登录")
         else:
-            self.bili_status_label.setText("✘ 未登录")
-            self.bili_status_label.setStyleSheet("color: gray; font-weight: bold;")
-            self.btn_bili_logout.setEnabled(False)
+            self.bili_dot.set_status("warn")
+            self.bili_badge_text.setText("未登录")
+            self.bili_badge_text.setStyleSheet(f"color: {DOT_COLORS['warn']};")
+            self.btn_bili_login.show()
+            self.btn_bili_logout.hide()
             self.log("B站凭证: 未登录 (拉流仅 720P)")
 
     def on_bili_logout(self):
-        """退出 B站: 删除 cookie 文件"""
+        """退出 B站: 确认后删除 cookie 文件"""
+        from PySide6.QtWidgets import QMessageBox
+
+        ret = QMessageBox.question(self, "退出B站", "确定退出 B站登录并清除凭证？")
+        if ret != QMessageBox.Yes:
+            return
         from mhycli.live_link import _BILI_COOKIE_FILE
 
         try:
@@ -506,41 +650,57 @@ class MainWindow(QMainWindow):
         acc = self._get_selected_account()
         if acc is None:
             self.log("✘ 没有可用账号, 先扫码登录或添加 Cookie")
+            self._set_scan_status("error", "没有可用账号")
             return
         stoken = acc.get("access_key", "")
         mid = acc.get("mid", "")
         if not stoken or not mid:
             self.log(f"✘ 账号 {acc.get('uid')} 缺少 stoken/mid")
+            self._set_scan_status("error", "账号缺少凭证")
             return
 
         rid = self.rid_edit.text().strip()
         if not rid.isdigit():
             self.log("✘ RID 必须是纯数字")
+            self._set_invalid(self.rid_edit, True)
+            self._set_scan_status("error", "请输入纯数字房间号")
             return
-
-        # 超时时间 (默认 180)
-        try:
-            timeout = float(self.timeout_edit.text().strip() or "180")
-        except ValueError:
-            self.log("✘ 超时时间必须是数字")
-            return
+        self._set_invalid(self.rid_edit, False)
 
         platform = self.platform_combo.currentData()
+        timeout = float(self.timeout_spin.value())
         self.log(f"使用账号 {acc.get('name')} (uid={acc.get('uid')}) 监视直播间 RID={rid}")
-        self.log(f"平台: {'B站' if platform == LivePlatform.BiliBili else '抖音'}  超时: {timeout}s")
+        self.log(f"平台: {'B站' if platform == LivePlatform.BiliBili else '抖音'}  超时: {int(timeout)}s")
 
         client = MhyClient()
         self.scan_worker = ScanWorker(client, stoken, mid, platform, rid, timeout, self)
         self.scan_worker.log.connect(self.log)
+        self.scan_worker.metrics.connect(self._on_scan_metrics)
         self.scan_worker.finished.connect(self._on_scan_done)
         self.scan_worker.start()
         self.btn_scan.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.status_label.setText("扫描中...")
+        self.btn_scan.setText("扫描中...")
+        self.scan_progress.setRange(0, 0)  # 无限循环动画
+        self.scan_progress.show()
+        self._set_scan_status("busy", "扫描中", pulse=True)
         # 角色信息通过独立 QThread 获取 (信号回传, 线程安全)
         self.roles_worker = RolesWorker(acc, self)
         self.roles_worker.result.connect(self._on_roles_result)
         self.roles_worker.start()
+
+    def _set_scan_status(self, status: str, text: str, pulse: bool = False):
+        """设置扫描状态灯 + 文字 + 底部状态"""
+        self.scan_dot.set_status(status, pulse=pulse)
+        self.scan_status_label.setText(text)
+        self.scan_status_label.setStyleSheet(f"color: {DOT_COLORS[status]};")
+        self.footer_dot.set_status(status)
+        self.footer_text.setText(text)
+
+    def _on_scan_metrics(self, elapsed, bytes_read, rss_kb, frame_count):
+        mb = bytes_read / 1024 / 1024
+        self.footer_metrics.setText(
+            f"流量 {mb:.2f} MB · 帧 {frame_count} · 内存 {rss_kb/1024:.1f} MB · 已等待 {elapsed:.0f}s")
 
     def _on_roles_result(self, text):
         if text:
@@ -550,21 +710,23 @@ class MainWindow(QMainWindow):
         if self.scan_worker and self.scan_worker.isRunning():
             self.scan_worker.stop()
             self.log("正在停止...")
-            self.status_label.setText("正在停止...")
+            self._set_scan_status("warn", "正在停止...")
         else:
             self.log("当前没有正在运行的扫描")
 
     def _on_scan_done(self, ok, ticket):
         self.btn_scan.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        self.btn_scan.setText("开始扫描")
+        self.scan_progress.hide()
         if ok:
-            self.status_label.setText(f"✔ 抢码成功 ticket={ticket}")
+            self._set_scan_status("ok", f"✔ 抢码成功 ticket={ticket}")
             self.log(f"✔ 抢码成功! ticket={ticket}")
         elif ticket == "停止":
-            self.status_label.setText("已停止")
+            self._set_scan_status("idle", "已停止")
             self.log("已停止")
         else:
-            self.status_label.setText("✘ 抢码失败")
+            self._set_scan_status("error", "✘ 抢码失败")
             self.log(f"✘ 抢码失败: {ticket}")
 
     # ---- 通用 ----
@@ -618,6 +780,27 @@ def main():
     sys.excepthook = excepthook
 
     app = QApplication(sys.argv)
+    # 深色主题: Fusion 样式基座 (跨平台渲染一致) + 全局调色板 + QSS
+    from PySide6.QtGui import QPalette, QColor
+    from mhycli.theme import BG, SURFACE, SURFACE2, SURFACE3, INPUT_BG, TEXT1, TEXT2, TEXT3, ACCENT, ACCENT_ON
+
+    app.setStyle("Fusion")
+    pal = QPalette()
+    pal.setColor(QPalette.Window, QColor(SURFACE))
+    pal.setColor(QPalette.WindowText, QColor(TEXT1))
+    pal.setColor(QPalette.Base, QColor(INPUT_BG))
+    pal.setColor(QPalette.AlternateBase, QColor(SURFACE3))
+    pal.setColor(QPalette.Text, QColor(TEXT1))
+    pal.setColor(QPalette.Button, QColor(SURFACE2))
+    pal.setColor(QPalette.ButtonText, QColor(TEXT2))
+    pal.setColor(QPalette.Highlight, QColor(ACCENT))
+    pal.setColor(QPalette.HighlightedText, QColor(ACCENT_ON))
+    pal.setColor(QPalette.PlaceholderText, QColor(TEXT3))
+    pal.setColor(QPalette.ToolTipBase, QColor(SURFACE3))
+    pal.setColor(QPalette.ToolTipText, QColor(TEXT1))
+    app.setPalette(pal)
+    app.setStyleSheet(QSS)
+
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
