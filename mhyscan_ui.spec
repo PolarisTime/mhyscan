@@ -31,6 +31,10 @@ a = Analysis(
         'zxingcpp',
         # opencv 视频后端
         'cv2',
+        # numpy (cv2/PyAV 传递依赖, 需显式收集)
+        'numpy',
+        'numpy._core',
+        'numpy._core._multiarray_umath',
         # 二维码生成
         'qrcode',
         'qrcode.image.pil',

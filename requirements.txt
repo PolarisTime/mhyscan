@@ -5,3 +5,4 @@ qrcode>=7.4
 Pillow>=10
 av>=13
 PySide6>=6.6
+numpy>=1.26
