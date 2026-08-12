@@ -789,9 +789,9 @@ def main():
     sys.excepthook = excepthook
 
     app = QApplication(sys.argv)
-    # 深色主题: Fusion 样式基座 (跨平台渲染一致) + 全局调色板 + QSS
+    # 明亮主题: Fusion 样式基座 (跨平台渲染一致) + 全局调色板 + QSS
     from PySide6.QtGui import QPalette, QColor
-    from mhycli.theme import BG, SURFACE, SURFACE2, SURFACE3, INPUT_BG, TEXT1, TEXT2, TEXT3, ACCENT, ACCENT_ON
+    from mhycli.theme import SURFACE, SURFACE2, SURFACE3, INPUT_BG, TEXT1, TEXT2, TEXT3, ACCENT, ACCENT_ON
 
     app.setStyle("Fusion")
     pal = QPalette()
