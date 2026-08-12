@@ -285,7 +285,7 @@ class MainWindow(QMainWindow):
         h.addWidget(title)
         h.addStretch()
 
-        # B站徽章
+        # B站状态徽章 (仅显示状态; 登录/退出按钮在账号管理卡内)
         self.badge = QFrame(objectName="badge")
         bh = QHBoxLayout(self.badge)
         bh.setContentsMargins(8, 3, 8, 3)
@@ -295,13 +295,6 @@ class MainWindow(QMainWindow):
         bh.addWidget(self.bili_dot)
         bh.addWidget(self.bili_badge_text)
         h.addWidget(self.badge)
-
-        self.btn_bili_login = QPushButton("登录", objectName="biliLogin")
-        self.btn_bili_login.setProperty("ghost", True)
-        self.btn_bili_logout = QPushButton("退出", objectName="biliLogout")
-        self.btn_bili_logout.setProperty("ghost", True)
-        h.addWidget(self.btn_bili_login)
-        h.addWidget(self.btn_bili_logout)
 
         self.header_meta = QLabel("账号 0", objectName="headerMeta")
         h.addWidget(self.header_meta)
@@ -342,6 +335,22 @@ class MainWindow(QMainWindow):
         btn_row.addStretch()
         al.addLayout(btn_row)
 
+        # B站凭证行 (与米游社登录同区, 避免歧义)
+        bili_row = QHBoxLayout()
+        bili_row.setSpacing(6)
+        self.bili_dot2 = StatusDot("idle")
+        bili_row.addWidget(self.bili_dot2)
+        self.bili_status_text = QLabel("B站未登录", objectName="cardSub")
+        bili_row.addWidget(self.bili_status_text)
+        bili_row.addStretch()
+        self.btn_bili_login = QPushButton("B站登录")
+        self.btn_bili_login.setProperty("ghost", True)
+        self.btn_bili_logout = QPushButton("退出")
+        self.btn_bili_logout.setProperty("danger", True)
+        bili_row.addWidget(self.btn_bili_login)
+        bili_row.addWidget(self.btn_bili_logout)
+        al.addLayout(bili_row)
+
         self.account_list = QListWidget(objectName="accountList")
         self.account_list.setSizePolicy(self.account_list.sizePolicy().horizontalPolicy(),
                                         self.account_list.sizePolicy().verticalPolicy())
@@ -376,10 +385,18 @@ class MainWindow(QMainWindow):
         form.addRow("超时", self.timeout_spin)
         sl.addLayout(form)
 
+        # 扫描按钮行: 开始 + 停止 并排
+        scan_btn_row = QHBoxLayout()
+        scan_btn_row.setSpacing(8)
         self.btn_scan = QPushButton("开始扫描")
         self.btn_scan.setProperty("primary", True)
         self.btn_scan.setMinimumHeight(40)
-        sl.addWidget(self.btn_scan)
+        self.btn_stop = QPushButton("停止")
+        self.btn_stop.setProperty("danger", True)
+        self.btn_stop.setEnabled(False)
+        scan_btn_row.addWidget(self.btn_scan, 1)
+        scan_btn_row.addWidget(self.btn_stop)
+        sl.addLayout(scan_btn_row)
 
         # 扫描进度条 (3px 无限循环, 默认隐藏)
         self.scan_progress = QProgressBar(objectName="scanProgress")
@@ -387,21 +404,6 @@ class MainWindow(QMainWindow):
         self.scan_progress.setTextVisible(False)
         self.scan_progress.hide()
         sl.addWidget(self.scan_progress)
-
-        # 扫描状态 (状态灯 + 文字 + 停止按钮)
-        scan_status_row = QHBoxLayout()
-        scan_status_row.setSpacing(6)
-        self.scan_dot = StatusDot("idle")
-        self.scan_status_label = QLabel("就绪")
-        self.scan_status_label.setStyleSheet(f"color: {DOT_COLORS['idle']};")
-        scan_status_row.addWidget(self.scan_dot)
-        scan_status_row.addWidget(self.scan_status_label)
-        scan_status_row.addStretch()
-        self.btn_stop = QPushButton("停止")
-        self.btn_stop.setProperty("danger", True)
-        self.btn_stop.setEnabled(False)
-        scan_status_row.addWidget(self.btn_stop)
-        sl.addLayout(scan_status_row)
 
         ll.addWidget(scan_card)
         splitter.addWidget(left)
@@ -526,21 +528,29 @@ class MainWindow(QMainWindow):
 
     # ---- B站登录状态 (头部徽章) ----
     def refresh_bili_status(self):
-        """检测 B站 cookie 状态并更新头部徽章 (强制刷新进程缓存)"""
+        """检测 B站 cookie 状态并更新头部徽章 + 账号卡内状态 (强制刷新进程缓存)"""
         from mhycli.live_link import get_bili_cookie
 
         cookie = get_bili_cookie(force_refresh=True)
         if cookie:
+            # 头部徽章
             self.bili_dot.set_status("ok")
-            self.bili_badge_text.setText("已登录")
+            self.bili_badge_text.setText("B站已登录")
             self.bili_badge_text.setStyleSheet(f"color: {DOT_COLORS['ok']};")
+            # 账号卡内
+            self.bili_dot2.set_status("ok")
+            self.bili_status_text.setText("B站已登录 (1080P)")
+            self.bili_status_text.setStyleSheet(f"color: {DOT_COLORS['ok']};")
             self.btn_bili_login.hide()
             self.btn_bili_logout.show()
             self.log("B站凭证: 已登录")
         else:
             self.bili_dot.set_status("warn")
-            self.bili_badge_text.setText("未登录")
+            self.bili_badge_text.setText("B站未登录")
             self.bili_badge_text.setStyleSheet(f"color: {DOT_COLORS['warn']};")
+            self.bili_dot2.set_status("warn")
+            self.bili_status_text.setText("B站未登录 (720P)")
+            self.bili_status_text.setStyleSheet(f"color: {DOT_COLORS['warn']};")
             self.btn_bili_login.show()
             self.btn_bili_logout.hide()
             self.log("B站凭证: 未登录 (拉流仅 720P)")
@@ -692,11 +702,8 @@ class MainWindow(QMainWindow):
         self.roles_worker.start()
 
     def _set_scan_status(self, status: str, text: str, pulse: bool = False):
-        """设置扫描状态灯 + 文字 + 底部状态"""
-        self.scan_dot.set_status(status, pulse=pulse)
-        self.scan_status_label.setText(text)
-        self.scan_status_label.setStyleSheet(f"color: {DOT_COLORS[status]};")
-        self.footer_dot.set_status(status)
+        """设置底部状态栏 (抢码卡内状态已移除, 状态统一在底部显示)"""
+        self.footer_dot.set_status(status, pulse=pulse)
         self.footer_text.setText(text)
 
     def _on_scan_metrics(self, elapsed, bytes_read, rss_kb, frame_count):
