@@ -51,23 +51,32 @@ class LoginWorker(QThread):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._session = None
+        self._stopped = False
+
+    def stop(self):
+        """协作式停止: 设置标志, 轮询循环中检查"""
+        self._stopped = True
 
     def run(self):
+        class _Stopped(Exception):
+            pass
+
+        def on_status(status):
+            if self._stopped:
+                raise _Stopped()
+
+        def on_qr(url, ticket):
+            self.qr_ready.emit(url)
+
         try:
             client = MhyClient()
-
-            def on_status(status):
-                pass
-
-            def on_qr(url, ticket):
-                self.qr_ready.emit(url)
-
             session = app_qr_login(client, on_status=on_status, on_qr=on_qr, timeout=300)
             if not session.stoken:
                 self.failed.emit("扫码登录失败或超时")
                 return
             self.finished_ok.emit(session.uid, session.stoken, session.mid)
+        except _Stopped:
+            return  # 用户主动停止, 静默返回
         except Exception as e:
             self.failed.emit(f"扫码登录异常: {e}")
 
@@ -80,7 +89,22 @@ class BiliLoginWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._stopped = False
+
+    def stop(self):
+        """协作式停止: 设置标志, 轮询循环中检查"""
+        self._stopped = True
+
     def run(self):
+        class _Stopped(Exception):
+            pass
+
+        def on_status(code):
+            if self._stopped:
+                raise _Stopped()
+
         try:
             from mhycli import bili_login
             import requests
@@ -88,13 +112,15 @@ class BiliLoginWorker(QThread):
             session = requests.Session()
             qrcode_url, auth_code = bili_login.get_qrcode(session)
             self.qr_ready.emit(qrcode_url)
-            resp = bili_login.poll_login(session, auth_code, timeout=180)
+            resp = bili_login.poll_login(session, auth_code, on_status=on_status, timeout=180)
             cookies = bili_login.extract_cookies(resp)
             if not cookies:
                 self.failed.emit("登录成功但未获取到 cookie")
                 return
             bili_login.save_cookies_to_file(cookies)
             self.finished_ok.emit(bili_login.cookie_summary(cookies))
+        except _Stopped:
+            return  # 用户主动停止, 静默返回
         except TimeoutError:
             self.failed.emit("扫码登录超时")
         except Exception as e:
@@ -143,12 +169,16 @@ class ScanWorker(QThread):
         self.rid = rid
         self.timeout = timeout
         self.grabber = None
+        self._stopped = False
 
     def run(self):
         try:
             grabber = LiveStreamGrabber(self.client, self.stoken, self.mid,
                                         frame_skip=2)
             self.grabber = grabber
+            if self._stopped:
+                self.finished.emit(False, "停止")
+                return
             ok, ticket = grabber.grab_once(
                 self.platform, self.rid, timeout=self.timeout,
                 progress_cb=self._progress, log_cb=self.log.emit)
@@ -162,6 +192,7 @@ class ScanWorker(QThread):
                       f"帧 {frame_count:5d} | 内存 {rss_kb/1024:.1f} MB")
 
     def stop(self):
+        self._stopped = True
         if self.grabber:
             self.grabber.stop()
 
@@ -173,7 +204,8 @@ class QrCodeDialog(QDialog):
     def __init__(self, url: str, label: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("扫码登录")
-        self.setModal(True)
+        # 关键: 必须非模态。setModal(True)+show() 在 Windows 上不显示 (模态需 exec())
+        self.setModal(False)
         self.resize(360, 440)
         layout = QVBoxLayout(self)
         lbl = QLabel(label)
@@ -342,20 +374,24 @@ class MainWindow(QMainWindow):
 
     def _show_qr_dialog(self, url, label="请用米游社APP扫描二维码登录"):
         self.log(f"正在显示二维码窗口... url={url[:60]}")
-        if not hasattr(self, "_qr_dialogs"):
-            self._qr_dialogs = []
-        # 关闭旧对话框
-        for d in list(self._qr_dialogs):
-            if d.isVisible():
-                d.close()
-        self._qr_dialogs.clear()
+        self._close_qr_dialogs()
         # 创建并显示新对话框 (非模态, 不阻塞扫码轮询)
         dialog = QrCodeDialog(url, label, self)
         dialog.show()
-        self._qr_dialogs.append(dialog)
-        self.log(f"二维码窗口已显示 (共 {len(self._qr_dialogs)} 个)")
+        dialog.raise_()   # 确保置顶
+        dialog.activateWindow()
+        self._qr_dialogs = [dialog]
+        self.log(f"二维码窗口已显示")
+
+    def _close_qr_dialogs(self):
+        """关闭所有二维码对话框"""
+        for d in getattr(self, "_qr_dialogs", []):
+            if d.isVisible():
+                d.close()
+        self._qr_dialogs = []
 
     def _on_login_ok(self, uid, stoken, mid):
+        self._close_qr_dialogs()
         ok = self.store.add_account(f"账号{uid}", stoken, uid, mid, "官服")
         if ok:
             self.log(f"✔ 登录成功并保存账号 uid={uid}")
@@ -395,6 +431,7 @@ class MainWindow(QMainWindow):
         self._show_qr_dialog(url, "请用B站APP扫描二维码登录")
 
     def _on_bili_ok(self, summary):
+        self._close_qr_dialogs()
         self.log(f"✔ B站登录成功, cookie: {summary}")
         self.log(f"  已保存到 Config/bili_cookie.json, 后续拉流使用 (1080P + 抗限流)")
 
@@ -463,14 +500,19 @@ class MainWindow(QMainWindow):
 
     # ---- 通用 ----
     def _on_worker_failed(self, msg):
+        self._close_qr_dialogs()
         self.log(f"✘ {msg}")
 
     def closeEvent(self, event):
-        # 停止所有工作线程, 避免退出时崩溃 (QThread destroyed while running)
+        # 协作式停止所有工作线程, 再等待; 超时兜底 terminate
         for w in (self.scan_worker, self.login_worker, self.bili_worker, getattr(self, "roles_worker", None)):
             if w and w.isRunning():
-                w.stop() if hasattr(w, "stop") else w.terminate()
+                if hasattr(w, "stop"):
+                    w.stop()
+                else:
+                    w.terminate()
                 w.wait(3000)
+        self._close_qr_dialogs()
         event.accept()
 
 
