@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# mhyscan 1.0.0 — PyInstaller 打包配置
+# mhyscan — PyInstaller 打包配置
 #
 # 用法 (在目标平台执行):
 #   pyinstaller mhyscan_ui.spec
@@ -8,14 +8,12 @@
 # 说明:
 #   - --onedir: PyAV/opencv 体积大, onedir 启动更快
 #   - --noconsole: Windows 下不弹出黑窗 (GUI 模式)
-#   - mhycli 为内部包, 自动收集; 第三方依赖自动分析
+#   - upx=False: 关键! UPX 压缩 Qt DLL 已知会导致 DLL 损坏/无法加载
+#   - PySide6 插件由 PyInstaller hook 自动收集, 不写无效 hiddenimport
 
 import os
 
 block_cipher = None
-
-# 版本号
-version = "1.0.0"
 
 a = Analysis(
     ['mhyscan_ui.py'],
@@ -23,9 +21,8 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[
-        # PyAV 的协议/解复用器/编解码器 (flv/hls/avc)
+        # PyAV (整包收集, 协议/编解码器由内部自动加载)
         'av',
-        'av.protocol',
         'av.codec',
         # zxing 二维码识别
         'zxingcpp',
@@ -60,8 +57,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    console=False,          # Windows 无黑窗
+    upx=False,          # 禁用 UPX, 避免 Qt DLL 损坏
+    console=False,      # Windows 无黑窗
     icon='',
 )
 
@@ -71,7 +68,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,          # 禁用 UPX
     upx_exclude=[],
     name='mhyscan_ui',
 )

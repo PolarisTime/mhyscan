@@ -514,6 +514,37 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    # 磁盘日志: noconsole 打包下 print 不可见, 所有错误写日志文件便于诊断
+    import logging
+    import traceback
+
+    log_file = Path(__file__).resolve().parent.parent / "Config" / "mhyscan.log"
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            filename=str(log_file),
+            filemode="a",
+            format="%(asctime)s [%(levelname)s] %(message)s",
+        )
+    except Exception:
+        pass
+    logging.info("=== mhyscan 启动 ===")
+
+    # 全局异常钩子: 未捕获异常写入日志 (而非静默消失)
+    def excepthook(exc_type, exc_value, exc_tb):
+        detail = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        logging.error("未捕获异常:\n%s", detail)
+        try:
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.critical(None, "错误", f"程序发生异常:\n{exc_value}\n\n详见 {log_file}")
+        except Exception:
+            pass
+
+    sys.excepthook = excepthook
+
     app = QApplication(sys.argv)
     win = MainWindow()
     win.show()
