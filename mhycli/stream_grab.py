@@ -106,19 +106,20 @@ def _stream_headers(platform: live_link.LivePlatform) -> dict:
 
 
 def _low_delay_options() -> dict:
-    """低延迟拉流 options — B站 http-flv 默认延迟约 5-10 秒
+    """低延迟拉流 options — 对齐 ffplay 低延迟参数
 
-    对齐 ffplay 低延迟参数:
+    注意: 本机 PyAV 15.1.0 传入非空 options= (流级选项字典) 会段错误
+    (avformat_find_stream_info 后 av_dict_free 双重释放), 必须以
+    container_options= 传入 (容器层选项, 不经过崩溃路径)。
+    flags=low_delay (解码标志) 在本机 PyAV 上同样会段错误, 不加入。
       - fflags=nobuffer      禁用输入缓冲
       - probesize=1024       减少探测数据量
       - analyzeduration=0    跳过流分析
-      - flags=low_delay      解码低延迟模式
     """
     return {
         "fflags": "nobuffer",
         "probesize": "1024",
         "analyzeduration": "0",
-        "flags": "low_delay",
     }
 
 
@@ -179,16 +180,27 @@ class LiveStreamGrabber:
         # [步骤2] 打开直播流 (低延迟)
         log_cb("[2/5] 打开直播流 (低延迟模式)...")
         headers = _stream_headers(platform)
-        options = {}
-        # RTMP/RTSP 等自定义流不需要 HTTP headers
-        if headers and not stream_url_final.lower().startswith(("rtmp://", "rtsp://", "srt://")):
-            options["headers"] = "\r\n".join(f"{k}: {v}" for k, v in headers.items()) + "\r\n"
-        # RTMP 直播流需要 rtmp_live 选项 (避免卡在读首帧)
-        if stream_url_final.lower().startswith("rtmp://"):
-            options["rtmp_live"] = "live"
-        options.update(_low_delay_options())
+        options = _low_delay_options()
+        resp = None
+        stream_low = stream_url_final.lower()
         try:
-            container = av.open(stream_url_final, options=options, timeout=15)
+            if stream_low.startswith(("rtmp://", "rtsp://", "srt://")):
+                # RTMP 直播流需要 rtmp_live 选项 (避免卡在读首帧)
+                if stream_low.startswith("rtmp://"):
+                    options["rtmp_live"] = "live"
+                # options= (流级选项) 在本机 PyAV 上段错误, 必须用 container_options=
+                container = av.open(stream_url_final,
+                                    container_options=options, timeout=15)
+            else:
+                # http(s) 直播流: 本机 PyAV 内置 http 客户端打开 B站流会段错误;
+                # 改用 requests 流式下载后以 fileobj 方式喂给 PyAV
+                # (requests 拉流稳定, 已实测正常)
+                import requests
+                resp = requests.get(stream_url_final, stream=True,
+                                    headers=headers, timeout=15)
+                resp.raise_for_status()
+                container = av.open(resp.raw, container_options=options,
+                                    timeout=15)
             video = container.streams.video[0]
             w = video.codec_context.width
             h = video.codec_context.height
@@ -288,4 +300,6 @@ class LiveStreamGrabber:
                 container.close()
             except Exception:
                 pass
+            if resp:
+                resp.close()
         return False, "停止"
