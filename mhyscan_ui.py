@@ -271,13 +271,13 @@ class MainWindow(QMainWindow):
 
         # ===== 头部 =====
         header = QFrame(objectName="header")
-        header.setFixedHeight(56)
+        header.setFixedHeight(62)
         h = QHBoxLayout(header)
-        h.setContentsMargins(16, 8, 16, 8)
+        h.setContentsMargins(18, 10, 18, 10)
         h.setSpacing(10)
 
         logo = QLabel("M", objectName="logo")
-        logo.setFixedSize(34, 34)
+        logo.setFixedSize(36, 36)
         logo.setAlignment(Qt.AlignCenter)
         h.addWidget(logo)
 
@@ -311,13 +311,13 @@ class MainWindow(QMainWindow):
         left = QWidget(objectName="leftPanel")
         left.setMinimumWidth(300)
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(12, 12, 6, 12)
-        ll.setSpacing(12)
+        ll.setContentsMargins(14, 14, 8, 14)
+        ll.setSpacing(14)
 
         # -- 账号管理卡 --
         acc_card = QFrame(objectName="card")
         al = QVBoxLayout(acc_card)
-        al.setContentsMargins(14, 14, 14, 14)
+        al.setContentsMargins(16, 16, 16, 16)
         al.setSpacing(10)
 
         acc_title = QLabel("账号管理", objectName="cardTitle")
@@ -363,7 +363,7 @@ class MainWindow(QMainWindow):
         # -- 抢码设置卡 --
         scan_card = QFrame(objectName="card")
         sl = QVBoxLayout(scan_card)
-        sl.setContentsMargins(14, 14, 14, 14)
+        sl.setContentsMargins(16, 16, 16, 16)
         sl.setSpacing(12)
 
         scan_title = QLabel("抢码设置", objectName="cardTitle")
@@ -411,7 +411,7 @@ class MainWindow(QMainWindow):
         # -- 日志卡 --
         log_card = QFrame(objectName="card")
         log_layout = QVBoxLayout(log_card)
-        log_layout.setContentsMargins(14, 14, 14, 14)
+        log_layout.setContentsMargins(16, 16, 16, 16)
         log_layout.setSpacing(8)
 
         log_top = QHBoxLayout()
