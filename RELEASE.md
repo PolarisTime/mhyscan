@@ -1,6 +1,17 @@
-# mhyscan v1.3.0 — 发布说明
+# mhyscan v1.3.1 — 发布说明
 
 米哈游直播流抢码工具 (PySide6 图形界面 + CLI)
+
+## v1.3.1 变更
+- **修复**: 低延迟拉流恢复 — PyAV 15.1.0 传入非空 `options=` (流级选项字典) 会段错误
+  (`avformat_find_stream_info` 后 `av_dict_free` 双重释放), 低延迟参数改以
+  `container_options=` (容器层选项) 传入, RTMP 直连与 requests fileobj 两条路径
+  均实测通过 (mediaMTX + 模拟推流 + 二维码识别完整链路)
+- **UI 视觉焕新** (theme v2): 卡片/按钮/输入框更大圆角, 主按钮翡翠绿渐变,
+  输入聚焦态 (主色边框 + 淡绿底), 卡片标题主色强调条, 账号列表选中态,
+  日志区淡底, 8px 细滚动条, 进度条渐变, 版本号胶囊化
+- 修复 QSS 全局背景导致的标题/底部灰底色块
+- 新增 imageio-ffmpeg 依赖 (RUNBOOK 推流测试用)
 
 ## 功能
 - 米游社 App 扫码登录 (新一代 passport 接口)

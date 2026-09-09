@@ -24,3 +24,9 @@ dist/
 Thumbs.db
 .idea/
 .vscode/
+
+# ===== 前端杂项 / 备份 =====
+mhycli/node_modules/
+mhycli/package.json
+mhycli/package-lock.json
+*.bak-*
