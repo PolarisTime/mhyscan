@@ -1,32 +1,29 @@
-# ===== 敏感数据 (禁止提交) =====
-/Config/
-*.cookie
-login_qrcode.png
-bili_login_qrcode.png
-qr_login.png
-auto.crt
-auto.key
+# Rust
+/target
+/tauri-app/src-tauri/target
 
-# ===== Python =====
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
+# Tauri 生成的资源
+/tauri-app/src-tauri/gen
+/tauri-app/src-tauri/icons/icon.ico
+/tauri-app/src-tauri/icons/icon.icns
+/tauri-app/src-tauri/icons/32x32.png
+/tauri-app/src-tauri/icons/128x128.png
+/tauri-app/src-tauri/icons/128x128@2x.png
+/tauri-app/src-tauri/icons/StoreLogo.png
+/tauri-app/src-tauri/icons/Square*.png
+/tauri-app/src-tauri/icons/icon*.png
+
+# Node / 遥测 Worker
+/server/node_modules
+/server/.wrangler
+/server/dist
+
+# 构建产物
+/dist
+
+# 本地配置与密钥（永远不要提交）
+/Config
+config/
+*.pem
+*.key
 .env
-
-# ===== 构建产物 =====
-build/
-dist/
-
-# ===== 系统/IDE =====
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-
-# ===== 前端杂项 / 备份 =====
-mhycli/node_modules/
-mhycli/package.json
-mhycli/package-lock.json
-*.bak-*

@@ -2,123 +2,111 @@
 
 # mhyscan
 
-米哈游直播流抢码工具 · 基于 Python / PySide6
+米哈游直播流抢码工具 · 基于 **Rust**（openh264 + rxing）
 
-[![Build Windows](https://github.com/PolarisTime/mhyscan/actions/workflows/build.yml/badge.svg)](https://github.com/PolarisTime/mhyscan/actions/workflows/build.yml)
-![Python](https://img.shields.io/badge/Python-3.12+-blue)
+[![Auto Release](https://github.com/PolarisTime/mhyscan/actions/workflows/auto-release.yml/badge.svg)](https://github.com/PolarisTime/mhyscan/actions/workflows/auto-release.yml)
+![Rust](https://img.shields.io/badge/Rust-1.85+-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 </div>
 
-## 📖 简介
+## 简介
 
-**mhyscan** 是一款用于从直播流中自动识别并抢占米哈游游戏登录二维码的工具。
-它支持 B站 / 抖音直播流的实时拉取、二维码识别与自动扫码登录，并提供图形界面与命令行两种使用方式。
+**mhyscan** 从 B站 / 抖音直播流中实时识别米哈游登录二维码，并用已登录账号自动抢码。
 
-> ⚠️ 本项目仅用于个人学习与研究，请勿用于商业用途。
+纯 Rust 实现：HTTP-FLV 拉流 → FLV 解复用 → H.264 硬解（openh264）→ ZXing 识别（rxing）→ `scanQRLogin`/`confirmQRLogin` 抢码。发布二进制约 **4–5 MB**，内存 ~15–35 MB。
 
-## ✨ 功能特性
+> ⚠️ 仅用于个人学习与研究，请勿用于商业用途。
 
-- 🖥️ **PySide6 图形界面** + **命令行**双模式
-- 📱 **米游社 App 扫码登录**（新一代 passport 接口）
-- 🔐 **B站扫码登录**（TV 端接口，保存拉流凭证）
-- 👥 **多账号管理**（Cookie / SToken 导入，`userinfo.json`）
-- 🎮 **直播间抢码**：B站 / 抖音直播流 → 二维码识别 → 自动 `scanQRLogin` + `confirmQRLogin`
-- 📊 **游戏角色信息显示**（7 天缓存）
-- ⚡ **低延迟拉流**（ffmpeg 低延迟参数）
-- 📜 **详细日志**（每 3 秒进度 + 上海时区时间戳）
+## 功能
 
-## 📦 安装
+- HTTP-FLV 低延迟拉流（FLV + AVC + 原画，多 CDN 候选容灾）
+- 二维码识别（rxing / ZXing）
+- 官服扫码登录 + 抢码（passport `scan/confirm`）
+- B站扫码登录（保存拉流凭证 cookie）
+- 抖音直播流
+- 多账号/单账号抢码、连接预热
+- 匿名遥测（可关闭，自建 Cloudflare Worker + D1）
+- 可选 Tauri 桌面端（`tauri-app/`，HTML 设计稿）
 
-### 环境要求
-- Python 3.12+
-- Windows / Linux / macOS
+## 安装 / 构建
 
-### 依赖安装
 ```bash
-pip install -r requirements.txt
+cargo build --release
+# 产物: target/release/mhyscan-rs
 ```
 
-## 🚀 使用
-
-### 图形界面（推荐）
+Windows 交叉编译（本机 Linux）：
 ```bash
-python mhyscan_ui.py
+rustup target add x86_64-pc-windows-gnu
+cargo install cargo-zigbuild            # 配合 zig 提供 mingw 工具链
+cargo zigbuild --release --target x86_64-pc-windows-gnu
 ```
-或使用已打包的 Windows 版本（见 [Releases](https://github.com/PolarisTime/mhyscan/releases)）。
 
-### 命令行
-```bash
-# 米游社 App 扫码登录，添加账号
-mhyscan login
+## 命令
 
-# B站扫码登录（保存拉流凭证，1080P + 抗限流）
-mhyscan bili-login
-
-# 注册用户（粘贴含 SToken 的 Cookie）
-mhyscan add --cookie "stuid=..;stoken=..;mid=.."
-
-# 列出账号
-mhyscan accounts
-
-# 监视 B站直播间抢码
-mhyscan scan bili <RID>
-
-# 监视抖音直播间抢码
-mhyscan scan douyin <RID>
-
-# 查看详细帮助
+```text
+mhyscan scan <RID> [--platform bili|douyin] [--timeout 秒]   监视直播间抢码
+mhyscan accounts                                             列出已登录账号
+mhyscan login                                                米游社 App 扫码登录 (官服)
+mhyscan login bili                                           B站扫码登录, 保存拉流凭证
+mhyscan login bili-game <账号> <密码>                         B服崩坏3 账号密码登录
+mhyscan qr <图片>                                            离线识别二维码
 mhyscan help
 ```
 
-### 抢码流程
-1. 使用 `mhyscan login` 或 `mhyscan add` 注册账号
-2. （可选）使用 `mhyscan bili-login` 登录 B站，提升拉流画质
-3. 输入直播间 `RID`（纯数字），开始扫描
-4. 识别到米哈游登录二维码后自动抢码登录
-
-## ⚙️ 配置
-
-| 文件 | 说明 |
-|------|------|
-| `Config/userinfo.json` | 账号信息（stoken/mid） |
-| `Config/bili_cookie.json` | B站登录凭证（或环境变量 `BILIBILI_COOKIE`） |
-| `Config/cache.json` | 游戏角色缓存（7 天） |
-
-## 🔨 构建打包
-
-### 本地打包
+示例：
 ```bash
-pip install pyinstaller
-pyinstaller mhyscan_ui.spec --noconfirm
-# 产物: dist/mhyscan_ui/
+mhyscan scan 6                       # B站 RID=6，默认 180s
+mhyscan scan 6 --platform douyin     # 抖音
+mhyscan scan 6 --timeout 600
 ```
 
-### CI/CD 自动构建（Windows）
-推送 `v*` 标签即可触发 GitHub Actions 自动构建并发布 Release：
+## 配置（环境变量）
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `MHYSCAN_CONFIG` | 账号库路径 | `Config/userinfo.json` |
+| `MHYSCAN_CONFIRM_DELAY_MS` | scan→confirm 等待 | `250` |
+| `MHYSCAN_TELEMETRY_URL` | 遥测端点（不设=关闭） | — |
+| `MHYSCAN_TELEMETRY_AUTH` / `_KEY` | HMAC / AES 密钥 | — |
+| `MHYSCAN_TELEMETRY_INTERVAL` | 定时上报间隔(s) | `300` |
+| `MHYSCAN_TELEMETRY=0` / `DO_NOT_TRACK=1` | 关闭遥测 | — |
+| `MHYSCAN_DEBUG` | 调试日志 | 关 |
+
+## 遥测后端（自建）
+
+`server/` 为 Cloudflare Worker + D1：`/collect` 接收（HMAC + AES-256-GCM + gzip）、每日 Cron 聚合与 90 天清理。见 `docs/telemetry-events.md`。
+
+部署：
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+cd server && npm install
+npx wrangler d1 create mhyscan_telemetry     # 填入 database_id
+npx wrangler d1 execute mhyscan_telemetry --remote --file=./schema.sql
+npx wrangler secret put TELEMETRY_AUTH
+npx wrangler secret put TELEMETRY_KEY
+npx wrangler deploy
 ```
 
-## 🛡️ 隐私与安全
+## CI/CD
 
-- 所有账号凭证仅保存在本地 `Config/` 目录，不会上传
-- `Config/` 已通过 `.gitignore` 排除，避免敏感数据被提交
-- 匿名 B站拉流为 720P；配置 B站 cookie 后为 1080P 原画
+- `auto-release.yml`：push 到 main 自动构建 Windows / Linux / macOS 并发布 Release（tag = 版本号 + 构建号）
+- `deploy-telemetry.yml`：`server/**` 变更时部署 Worker
+- `pages.yml`：发布 UI 设计稿到 GitHub Pages
 
-## 🙏 致谢
+## 桌面端（可选）
 
-本项目参考并借鉴了以下优秀开源项目，在此表示衷心感谢：
+`tauri-app/` 为 Tauri v2 工程（HTML 设计稿，需 WebView 环境构建）：
+```bash
+cd tauri-app/src-tauri
+cargo tauri icon ../../app-icon.png
+cargo tauri dev
+```
 
-| 项目 | 说明 |
-|------|------|
-| [MHY_Scanner](https://github.com/DSVVA/MHY_Scanner) | 原版米哈游扫码登录器，提供了整体功能与界面设计的参考 |
-| [FufuLauncher](https://github.com/FufuLauncher/FufuLauncher) | 原神启动器，参考了米哈游登录接口封装与 B站拉流/登录逻辑 |
-| [Snap.Hutao](https://github.com/DGP-Studio/Snap.Hutao) | 原神工具箱，参考了新一代米哈游扫码登录 API（passport 接口） |
-| [biliup](https://github.com/biliup/biliup) | B站直播录制工具，参考了 B站直播流获取、二维码登录与 cookie 机制 |
-| [mihoyo-api-collect](https://github.com/UIGF-org/mihoyo-api-collect) | 米哈游 API 收集文档，为接口调试提供了宝贵参考 |
+## 隐私
 
-## 📄 License
+所有账号凭证仅保存在本地 `Config/`（已 gitignore）。游戏 UID 等敏感信息不参与遥测；遥测仅上报低敏环境与扫描事件，可随时关闭。
+
+## License
 
 [MIT](LICENSE)

@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mhyscan</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0c0f;
+        --surface: #141619;
+        --surface-2: #1a1d22;
+        --surface-3: #22262d;
+        --line: #252932;
+        --line-soft: #1d2027;
+        --text: #ededf0;
+        --muted: #9ca3af;
+        --dim: #6b7280;
+        --accent: #4f86f7;
+        --accent-2: #3b6fe0;
+        --accent-soft: rgba(79, 134, 247, 0.14);
+        --ok: #3fb950;
+        --warn: #d29922;
+        --err: #f85149;
+        --purple: #bc8cff;
+        --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+        --r: 10px;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--bg); color: var(--text); font-family: var(--sans);
+        font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+      .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-thumb { background: #272b33; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+      ::-webkit-scrollbar-thumb:hover { background: #333843; background-clip: content-box; }
+
+      .app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; }
+
+      /* ============ header ============ */
+      .top {
+        display: flex; align-items: center; gap: 12px; padding: 0 18px;
+        border-bottom: 1px solid var(--line-soft);
+        background: linear-gradient(180deg, rgba(255,255,255,.018), transparent);
+      }
+      .mark {
+        width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+        background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
+        box-shadow: 0 4px 14px rgba(79,134,247,.34);
+      }
+      .brand { font-weight: 600; letter-spacing: .01em; }
+      .ver { color: var(--dim); font-size: 11px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; }
+      .grow { flex: 1; }
+      .chip {
+        display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px;
+        border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
+        color: var(--muted); font-size: 12px;
+      }
+      .chip b { color: var(--text); font-weight: 500; }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: #4b5563; }
+      .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,.16); }
+      .dot.busy { background: var(--warn); box-shadow: 0 0 0 3px rgba(210,153,34,.16); }
+
+      /* ============ layout ============ */
+      .body { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+      .side {
+        border-right: 1px solid var(--line-soft); padding: 16px; overflow: auto;
+        display: flex; flex-direction: column; gap: 20px;
+        background: linear-gradient(180deg, rgba(255,255,255,.012), transparent 240px);
+      }
+      .sec > h2 {
+        margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .09em;
+        text-transform: uppercase; color: var(--dim);
+      }
+      .sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+      .sec-head h2 { margin: 0; }
+      .link { color: var(--accent); font-size: 12px; }
+      .link:hover { text-decoration: underline; }
+      .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+
+      /* accounts */
+      .acct { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 8px; cursor: pointer; transition: background .12s; }
+      .acct:hover { background: var(--surface-2); }
+      .acct + .acct { margin-top: 1px; }
+      .cb { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #3a4252; display: grid; place-items: center; flex: none; transition: .12s; }
+      .acct.on .cb { border-color: var(--accent); background: transparent; }
+      .acct.on .cb::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+      .acct .name { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .acct .name .uid { display: block; color: var(--dim); font-family: var(--mono); font-size: 10.5px; }
+      .acct .type { color: var(--muted); font-size: 11px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 5px; flex: none; }
+
+      /* fields */
+      .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+      .field:last-child { margin-bottom: 0; }
+      .field > label { color: var(--muted); font-size: 12px; }
+      select, input[type="text"] {
+        width: 100%; height: 34px; background: var(--surface); color: var(--text);
+        border: 1px solid var(--line); border-radius: 9px; padding: 0 10px; font-size: 12.5px;
+        outline: none; transition: border-color .12s, box-shadow .12s;
+      }
+      select {
+        appearance: none; background-image:
+          linear-gradient(45deg, transparent 50%, var(--dim) 50%),
+          linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+        background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px;
+        background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+      }
+      select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+      select:disabled { color: var(--dim); }
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      input[type="range"] { width: 100%; accent-color: var(--accent); }
+      .range-val { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+      .telrow { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; }
+      .switch { width: 34px; height: 20px; border-radius: 999px; background: #2a303c; position: relative; cursor: pointer; transition: .15s; }
+      .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #8b93a3; transition: .15s; }
+      .switch.on { background: var(--accent); }
+      .switch.on::after { left: 16px; background: #fff; }
+
+      .cta { margin-top: auto; padding-top: 4px; }
+      .start {
+        width: 100%; height: 42px; border-radius: 10px; font-weight: 600; font-size: 13.5px;
+        background: var(--accent); color: #fff; box-shadow: 0 6px 18px rgba(79,134,247,.3);
+        transition: filter .12s, transform .05s;
+      }
+      .start:hover { filter: brightness(1.08); }
+      .start:active { transform: translateY(1px); }
+      .start.stop { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
+      .hint { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 9px; }
+      .hint b { color: var(--muted); font-weight: 500; }
+
+      /* ============ main ============ */
+      .main {
+        padding: 16px 18px; display: grid; gap: 16px; min-height: 0;
+        grid-template-rows: auto minmax(170px, 1fr) auto minmax(150px, 1fr);
+      }
+      .metrics { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+      .metric { padding: 13px 16px; border-left: 1px solid var(--line-soft); }
+      .metric:first-child { border-left: 0; }
+      .metric .k { color: var(--dim); font-size: 11px; letter-spacing: .04em; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+      .metric .k .dot { width: 6px; height: 6px; }
+      .metric .v { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
+      .metric .v.live { color: var(--ok); }
+
+      .monitor {
+        position: relative; min-height: 0; border: 1px solid var(--line); border-radius: 14px;
+        background: radial-gradient(520px 200px at 50% 0%, rgba(79,134,247,.06), transparent 70%), var(--surface);
+        display: grid; place-items: center; overflow: hidden;
+      }
+      .monitor .grid-bg {
+        position: absolute; inset: 0; opacity: .4;
+        background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+        background-size: 30px 30px;
+        -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
+        mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
+      }
+      .monitor .beam { position: absolute; left: 0; right: 0; top: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0; }
+      .monitor.live .beam { opacity: 1; animation: beam 2.6s cubic-bezier(.4,0,.6,1) infinite; }
+      .monitor .ph { position: relative; text-align: center; color: var(--dim); }
+      .monitor .ph .icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 12px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); transition: .2s; }
+      .monitor .ph .t { color: var(--text); font-size: 13.5px; font-weight: 500; margin-bottom: 5px; }
+      .monitor .ph .s { font-size: 12px; }
+      .monitor.live .ph .icon { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+      @keyframes beam { 0% { top: 0; } 100% { top: 100%; } }
+
+      .panel-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
+      .panel-head .t { flex: 1; font-weight: 500; font-size: 12.5px; }
+      .panel-head .n { color: var(--dim); font-size: 12px; }
+
+      .rec { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: center; padding: 13px 16px; transition: background .12s; }
+      .rec + .rec { border-top: 1px solid var(--line-soft); }
+      .rec:hover { background: var(--surface-2); }
+      .rec .code { font-family: var(--mono); font-size: 13px; display: flex; align-items: center; gap: 9px; }
+      .rec .code .tick { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,.14); }
+      .rec .meta { color: var(--dim); font-size: 11.5px; margin-top: 4px; padding-left: 15px; }
+      .rec .who { color: var(--ok); font-size: 12px; white-space: nowrap; }
+      .rec .time { color: var(--dim); font-size: 11px; font-family: var(--mono); }
+      .empty { padding: 26px; text-align: center; color: var(--dim); font-size: 12px; }
+
+      .term { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #0b0e14; }
+      .term .panel-head { background: var(--surface); }
+      .tabs { display: flex; gap: 16px; }
+      .tab { color: var(--dim); font-size: 11px; letter-spacing: .06em; padding: 3px 0; border-bottom: 1.5px solid transparent; cursor: pointer; }
+      .tab:hover { color: var(--muted); }
+      .tab.on { color: var(--text); border-color: var(--accent); }
+      .term .tools { margin-left: auto; color: var(--dim); font-size: 11.5px; display: flex; gap: 16px; }
+      .term .tools .link { color: var(--dim); }
+      .term .tools .link:hover { color: var(--accent); }
+      .term .body { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.75; }
+      .ln { display: flex; gap: 12px; white-space: pre-wrap; word-break: break-all; }
+      .ln .ts { color: #3f4757; flex: none; }
+      .ln .tag { flex: none; width: 58px; color: var(--muted); }
+      .ln.STREAM .tag { color: var(--purple); }
+      .ln.QR .tag { color: #79c0ff; }
+      .ln.LOGIN .tag { color: var(--ok); }
+      .ln.ERROR .tag { color: var(--err); }
+      .ln .msg { color: #bec6d4; }
+      .ln.hide { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <span class="mark">M</span>
+        <span class="brand">mhyscan</span>
+        <span class="ver num">v0.1.0</span>
+        <span class="grow"></span>
+        <div class="chip"><span id="dot" class="dot ok"></span><span id="status">就绪</span></div>
+        <div class="chip"><span id="platChip">B站</span> <span style="color:var(--line)">·</span> 延迟 <b class="num" id="latency">24</b>ms</div>
+      </header>
+
+      <div class="body">
+        <aside class="side">
+          <div class="sec">
+            <div class="sec-head"><h2>账号</h2><span id="login" class="link">扫码登录</span></div>
+            <div id="accounts" class="panel" style="padding:5px"></div>
+          </div>
+
+          <div class="sec">
+            <h2>直播流</h2>
+            <div class="field">
+              <label>平台</label>
+              <select id="platform"><option value="bili">B站</option><option value="douyin">抖音</option></select>
+            </div>
+            <div class="field">
+              <label>房间号 RID</label>
+              <input id="rid" type="text" value="6" />
+            </div>
+            <div class="two">
+              <div class="field"><label>画质</label><select id="quality"><option>720P</option><option>原画 1080P</option></select></div>
+              <div class="field"><label>引擎</label><select disabled><option>rxing</option></select></div>
+            </div>
+            <div class="field">
+              <label>抽帧频率 · 每 <span id="iv" class="range-val">3</span> 帧</label>
+              <input id="interval" type="range" min="1" max="10" value="3" />
+            </div>
+          </div>
+
+          <div class="sec">
+            <h2>设置</h2>
+            <div class="panel telrow"><span style="color:var(--muted)">匿名遥测</span><span id="tel" class="switch"></span></div>
+          </div>
+
+          <div class="cta">
+            <button id="start" class="start">启动扫描</button>
+            <div class="hint"><span>Space 启停</span><span>当前账号 <b id="ready">—</b></span></div>
+          </div>
+        </aside>
+
+        <main class="main">
+          <div class="metrics">
+            <div class="metric"><div class="k">运行时长</div><div class="v num" id="mTime">00:00:00</div></div>
+            <div class="metric"><div class="k">已解码帧</div><div class="v num" id="mFrames">0</div></div>
+            <div class="metric"><div class="k">识别二维码</div><div class="v num" id="mQr">0</div></div>
+            <div class="metric"><div class="k"><span id="streamDot" class="dot"></span>拉流状态</div><div class="v" id="mStream" style="font-size:16px">未连接</div></div>
+          </div>
+
+          <div id="monitor" class="monitor">
+            <div class="grid-bg"></div>
+            <div class="beam"></div>
+            <div class="ph">
+              <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M8 12h8"/></svg></div>
+              <div class="t" id="mTitle">未启动识别监视</div>
+              <div class="s" id="mHint">点击左侧「启动扫描」开始监听直播流</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head"><span class="t">识别与抢码记录</span><span class="n num" id="recCount">0 条</span></div>
+            <div id="records"><div class="empty">暂无记录，等待直播间出现登录二维码…</div></div>
+          </div>
+
+          <div class="term">
+            <div class="panel-head">
+              <div class="tabs" id="tabs">
+                <span class="tab on" data-tab="ALL">ALL</span>
+                <span class="tab" data-tab="STREAM">STREAM</span>
+                <span class="tab" data-tab="QR">QR</span>
+                <span class="tab" data-tab="LOGIN">LOGIN</span>
+              </div>
+              <span class="tools"><span id="clear" class="link">清空</span></span>
+            </div>
+            <div id="log" class="body"></div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script type="module">
+/* mhyscan UI — 演示（mock，未接后端） */
+
+const $ = (id) => document.getElementById(id);
+
+const ACCOUNTS = [
+  { name: "账号244202754", uid: "244202754", type: "官服" },
+  { name: "账号100863920", uid: "100863920", type: "官服" },
+  { name: "账号18029381", uid: "18029381", type: "B服" },
+];
+const SEED_RECORD = { ticket: "c1fd9c8b-840c", desc: "B站 · 直播间 6", who: "账号244202754", time: "19:30:45" };
+const SEED_LOGS = [
+  "mhyscan v0.1.0 就绪 (openh264 + rxing)",
+  "获取直播流地址成功: B站 直播间 6",
+  "直播流已连接 (HTTP-FLV 低延迟)",
+  "识别引擎 rxing 就绪, 约 6ms/帧",
+  "等待识别米哈游登录二维码...",
+  "账号244202754: scanQRLogin 成功",
+  "账号244202754: confirmQRLogin 成功",
+];
+
+let currentUid = ACCOUNTS[0].uid;
+let records = [];
+let scanning = false;
+let tab = "ALL";
+
+/* ---------- 日志 ---------- */
+const stamp = () => new Date().toTimeString().slice(0, 8);
+const cat = (t) => (["STREAM", "QR", "LOGIN"].includes(t) ? t : "OTHER");
+function tag(line) {
+  if (/错误|失败|Error/.test(line)) return "ERROR";
+  if (/抢码|登录|账号|scanQRLogin|confirm/.test(line)) return "LOGIN";
+  if (/二维码|识别|rxing/.test(line)) return "QR";
+  if (/直播流|拉流|FLV|流地址|B站|抖音/.test(line)) return "STREAM";
+  return "SYSTEM";
+}
+function log(text) {
+  const t = tag(text);
+  const el = document.createElement("div");
+  el.className = "ln " + (["STREAM", "QR", "LOGIN", "ERROR"].includes(t) ? t : "");
+  el.dataset.cat = cat(t);
+  el.innerHTML = `<span class="ts">${stamp()}</span><span class="tag">${t}</span><span class="msg"></span>`;
+  el.querySelector(".msg").textContent = text;
+  $("log").appendChild(el);
+  applyFilter(el);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+const applyFilter = (el) => el.classList.toggle("hide", tab !== "ALL" && el.dataset.cat !== tab);
+
+/* ---------- 账号（单账号） ---------- */
+function renderAccounts() {
+  $("accounts").innerHTML = ACCOUNTS.map((a) => `
+    <div class="acct ${a.uid === currentUid ? "on" : ""}" data-uid="${a.uid}">
+      <span class="cb"></span>
+      <span class="name">${a.name}<span class="uid">UID ${a.uid}</span></span>
+      <span class="type">${a.type}</span>
+    </div>`).join("");
+  $("accounts").querySelectorAll(".acct").forEach((el) =>
+    el.addEventListener("click", () => {
+      currentUid = el.dataset.uid;
+      renderAccounts();
+    })
+  );
+  const cur = ACCOUNTS.find((a) => a.uid === currentUid);
+  $("ready").textContent = cur ? cur.name : "—";
+}
+
+/* ---------- 记录 ---------- */
+function renderRecords() {
+  $("recCount").textContent = records.length + " 条";
+  $("mQr").textContent = records.length;
+  $("records").innerHTML = records.length
+    ? records.map((r) => `<div class="rec">
+        <div><div class="code"><span class="tick"></span>${r.ticket}</div><div class="meta">${r.desc}</div></div>
+        <div class="who">${r.who}</div>
+        <div class="time">${r.time}</div>
+      </div>`).join("")
+    : '<div class="empty">暂无记录，等待直播间出现登录二维码…</div>';
+}
+
+/* ---------- 启停（视觉占位） ---------- */
+function setStatus(text, kind) {
+  $("status").textContent = text;
+  $("dot").className = "dot " + (kind || "");
+}
+function toggle() {
+  scanning = !scanning;
+  $("start").textContent = scanning ? "停止扫描" : "启动扫描";
+  $("start").classList.toggle("stop", scanning);
+  $("monitor").classList.toggle("live", scanning);
+  setStatus(scanning ? "扫描中" : "就绪", scanning ? "busy" : "ok");
+  $("streamDot").className = "dot " + (scanning ? "ok" : "");
+  $("mStream").textContent = scanning ? "已连接" : "未连接";
+  $("mStream").classList.toggle("live", scanning);
+  $("mTitle").textContent = scanning ? "正在监听直播流，识别登录二维码…" : "未启动识别监视";
+  $("mHint").textContent = scanning ? `RID ${$("rid").value} · ${$("quality").value}` : "点击左侧「启动扫描」开始监听直播流";
+  log(scanning ? `启动扫描 · ${$("platform").value} · RID ${$("rid").value}` : "已停止扫描");
+}
+
+/* ---------- 事件 ---------- */
+$("start").addEventListener("click", toggle);
+document.addEventListener("keydown", (e) => {
+  if (e.code === "Space" && e.target === document.body) { e.preventDefault(); toggle(); }
+});
+$("tabs").addEventListener("click", (e) => {
+  const t = e.target.closest(".tab");
+  if (!t) return;
+  tab = t.dataset.tab;
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("on", x === t));
+  document.querySelectorAll(".ln").forEach(applyFilter);
+});
+$("interval").addEventListener("input", (e) => ($("iv").textContent = e.target.value));
+$("tel").addEventListener("click", (e) => e.target.classList.toggle("on"));
+$("clear").addEventListener("click", () => ($("log").innerHTML = ""));
+$("login").addEventListener("click", () => log("扫码登录：请用米游社 App 扫描（演示）"));
+$("platform").addEventListener("change", (e) => ($("platChip").textContent = e.target.value === "douyin" ? "抖音" : "B站"));
+setInterval(() => ($("latency").textContent = String(18 + Math.floor(Math.random() * 14))), 1500);
+
+/* ---------- 初始化 ---------- */
+renderAccounts();
+records = [{ ...SEED_RECORD }];
+renderRecords();
+SEED_LOGS.forEach(log);
+
+</script>
+  </body>
+</html>

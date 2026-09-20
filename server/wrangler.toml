@@ -1,0 +1,21 @@
+name = "mhyscan-telemetry"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# 原始事件保留天数（清理与聚合使用）
+[vars]
+RETENTION_DAYS = "90"
+# 允许的时间戳偏移（秒），防重放
+CLOCK_SKEW = "300"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mhyscan_telemetry"
+database_id = "435f32d3-7a8c-4a1d-adcc-5faee0adc3cd"
+
+[triggers]
+crons = ["15 3 * * *"]
+
+[[routes]]
+pattern = "api.40353607.xyz"
+custom_domain = true
