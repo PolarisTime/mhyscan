@@ -1,0 +1,6 @@
+# Windows 构建：静态链接 C 运行库，免装 VC++ Redistributable（双击/裸机可运行）
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

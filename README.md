@@ -88,20 +88,24 @@ npx wrangler secret put TELEMETRY_KEY
 npx wrangler deploy
 ```
 
-## CI/CD
+## 桌面端（GUI）
 
-- `auto-release.yml`：push 到 main 自动构建 Windows / Linux / macOS 并发布 Release（tag = 版本号 + 构建号）
-- `deploy-telemetry.yml`：`server/**` 变更时部署 Worker
-- `pages.yml`：发布 UI 设计稿到 GitHub Pages
+`tauri-app/` 为 Tauri v2 桌面端（`ui/` 为界面，已接后端命令 `list_accounts`/`start_login`/`scan`/`stop_scan`）。
 
-## 桌面端（可选）
-
-`tauri-app/` 为 Tauri v2 工程（HTML 设计稿，需 WebView 环境构建）：
+本地构建：
 ```bash
 cd tauri-app/src-tauri
-cargo tauri icon ../../app-icon.png
-cargo tauri dev
+cargo tauri icon ../../app-icon.png     # 生成各平台图标（必须）
+cargo tauri build
 ```
+
+## CI/CD
+
+- `release-gui.yml`：push 到 main 自动构建 **Windows / macOS GUI（Tauri）** 并发布 Release（安装包）
+- `deploy-telemetry.yml`：`server/**` 变更时部署 Cloudflare Worker
+- `pages.yml`：发布 UI 设计稿（`demo.html`）到 GitHub Pages
+
+> CLI 单文件可通过本地 `cargo build --release` 自行构建。
 
 ## 隐私
 
