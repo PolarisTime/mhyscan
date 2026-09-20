@@ -201,6 +201,14 @@
       .ln.ERROR .tag { color: var(--err); }
       .ln .msg { color: #bec6d4; }
       .ln.hide { display: none; }
+
+      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 50; }
+      .modal.show { display: grid; }
+      .modal-box { width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: center; }
+      .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 13px; }
+      .qr-img { width: 240px; height: 240px; background: #fff; border-radius: 10px; padding: 8px; }
+      .modal-status { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
+      .qr-text { margin-top: 6px; color: var(--dim); font-size: 10.5px; word-break: break-all; max-height: 40px; overflow: auto; }
     </style>
   </head>
   <body>
@@ -217,7 +225,7 @@
       <div class="body">
         <aside class="side">
           <div class="sec">
-            <div class="sec-head"><h2>账号</h2><span id="login" class="link">扫码登录</span></div>
+            <div class="sec-head"><h2>账号</h2><span style="display:flex;gap:10px"><span id="login" class="link">米游社登录</span><span id="biliLogin" class="link">B站登录</span></span></div>
             <div id="accounts" class="panel" style="padding:5px"></div>
           </div>
 
@@ -292,5 +300,14 @@
     </div>
 
     <script type="module" src="./main.js"></script>
+
+    <div id="modal" class="modal">
+      <div class="modal-box">
+        <div class="modal-head"><span id="modalTitle">扫码登录</span><span id="modalClose" class="link">关闭</span></div>
+        <img id="qrImg" class="qr-img" alt="二维码" />
+        <div id="modalStatus" class="modal-status">正在生成二维码…</div>
+        <div id="qrText" class="qr-text"></div>
+      </div>
+    </div>
   </body>
 </html>

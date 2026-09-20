@@ -33,6 +33,8 @@ function classify(line) {
   return "SYSTEM";
 }
 function log(text) {
+  updateProgress(text);
+  if (isProgress(text)) return; // 进度只更新指标，不刷日志
   const t = classify(text);
   const el = document.createElement("div");
   el.className = "ln " + (["STREAM", "QR", "LOGIN", "ERROR"].includes(t) ? t : "");
@@ -42,11 +44,13 @@ function log(text) {
   $("log").appendChild(el);
   applyFilter(el);
   $("log").scrollTop = $("log").scrollHeight;
-  updateProgress(text);
 }
 const applyFilter = (el) => el.classList.toggle("hide", tab !== "ALL" && el.dataset.cat !== tab);
 
-const PROGRESS_RE = /等待 (\d+)s \| 流量 ([\d.]+)MB \| 帧 (\d+) \| 识别 (\d+) \| 内存 (\d+)MB/;
+const PROGRESS_RE = /等待 (\d+)s · 流量 ([\d.]+)MB · 帧 (\d+) · 识别 (\d+) · 内存 (\d+)MB/;
+function isProgress(text) {
+  return PROGRESS_RE.test(text) || text.startsWith("PROGRESS ");
+}
 function updateProgress(text) {
   const m = text.match(PROGRESS_RE);
   if (!m) return;
@@ -54,6 +58,18 @@ function updateProgress(text) {
   $("mTime").textContent = new Date(secs * 1000).toISOString().slice(11, 19);
   $("mFrames").textContent = m[3];
   $("mQr").textContent = m[4];
+}
+
+/* ---------- 二维码弹窗 ---------- */
+function showModal(title, status) {
+  $("modalTitle").textContent = title;
+  $("modalStatus").textContent = status || "正在生成二维码…";
+  $("qrImg").removeAttribute("src");
+  $("qrText").textContent = "";
+  $("modal").classList.add("show");
+}
+function hideModal() {
+  $("modal").classList.remove("show");
 }
 
 /* ---------- 账号（单账号） ---------- */
@@ -186,15 +202,31 @@ $("clear").addEventListener("click", () => ($("log").innerHTML = ""));
 $("platform").addEventListener("change", (e) => ($("platChip").textContent = e.target.value === "douyin" ? "抖音" : "B站"));
 $("login").addEventListener("click", async () => {
   if (!IN_TAURI) {
-    log("扫码登录：请用米游社 App 扫描（demo）");
+    log("米游社扫码登录（demo）");
     return;
   }
-  log("正在生成登录二维码…");
+  showModal("米游社扫码登录", "正在生成二维码…");
   try {
     await TAURI.core.invoke("start_login");
   } catch (e) {
-    log("登录失败: " + e);
+    $("modalStatus").textContent = "登录失败: " + e;
   }
+});
+$("biliLogin").addEventListener("click", async () => {
+  if (!IN_TAURI) {
+    log("B站扫码登录（demo）");
+    return;
+  }
+  showModal("B站扫码登录", "正在生成二维码…");
+  try {
+    await TAURI.core.invoke("start_bili_login");
+  } catch (e) {
+    $("modalStatus").textContent = "登录失败: " + e;
+  }
+});
+$("modalClose").addEventListener("click", hideModal);
+$("modal").addEventListener("click", (e) => {
+  if (e.target === $("modal")) hideModal();
 });
 
 /* ---------- 初始化 ---------- */
@@ -208,11 +240,22 @@ $("login").addEventListener("click", async () => {
       log("== " + e.payload + " ==");
       setScanUI(false);
     });
-    await TAURI.event.listen("login-qr", (e) => log("登录二维码: " + e.payload));
-    await TAURI.event.listen("login-status", (e) => log("登录状态: " + e.payload));
+    await TAURI.event.listen("login-qr", (e) => {
+      $("qrImg").src = e.payload;
+      $("modalStatus").textContent = "请用对应 App 扫码";
+    });
+    await TAURI.event.listen("login-qr-text", (e) => {
+      $("qrText").textContent = e.payload;
+    });
+    await TAURI.event.listen("login-status", (e) => {
+      $("modalStatus").textContent = "状态: " + e.payload;
+      log("登录状态: " + e.payload);
+    });
     await TAURI.event.listen("login-done", (e) => {
+      $("modalStatus").textContent = "登录成功: " + e.payload;
       log("登录成功: " + e.payload);
       refreshAccounts();
+      setTimeout(hideModal, 1200);
     });
     await refreshAccounts();
   } else {

@@ -41,7 +41,14 @@ fn list_accounts() -> Result<Vec<AccountView>, String> {
 async fn start_login(app: AppHandle) -> Result<String, String> {
     let client = MhyClient::new(None);
     let (url, ticket) = client.app_create_qr().await.map_err(|e| e.to_string())?;
-    let _ = app.emit("login-qr", &url);
+
+    // 生成二维码 PNG，返回 data URL 供界面 <img> 显示
+    let png = mhyscan_rs::qr_png(&url).map_err(|e| e.to_string())?;
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    let data_url = format!("data:image/png;base64,{b64}");
+    let _ = app.emit("login-qr", &data_url);
+    let _ = app.emit("login-qr-text", &url);
 
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut last = String::new();
@@ -87,6 +94,39 @@ async fn start_login(app: AppHandle) -> Result<String, String> {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
     Err("登录超时".into())
+}
+
+/// B站扫码登录，保存拉流凭证（返回二维码 PNG data URL）
+#[tauri::command]
+async fn start_bili_login(app: AppHandle) -> Result<String, String> {
+    let http = reqwest::Client::new();
+    let (url, auth_code) = mhyscan_rs::bili_login::get_qrcode(&http)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let png = mhyscan_rs::qr_png(&url).map_err(|e| e.to_string())?;
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    let data_url = format!("data:image/png;base64,{b64}");
+    let _ = app.emit("login-qr", &data_url);
+    let _ = app.emit("login-qr-text", &url);
+
+    let app_for_log = app.clone();
+    let log = move |s: String| {
+        let _ = app_for_log.emit("login-status", s);
+    };
+    let resp = mhyscan_rs::bili_login::poll_login(&http, &auth_code, Duration::from_secs(180), &log)
+        .await
+        .map_err(|e| e.to_string())?;
+    let cookies = mhyscan_rs::bili_login::extract_cookies(&resp);
+    if cookies.is_empty() {
+        return Err("未取到 cookie".into());
+    }
+    let path = mhyscan_rs::bili_login::save_cookies(&cookies).map_err(|e| e.to_string())?;
+    let msg = format!("已保存 {} 个 cookie", cookies.len());
+    let _ = app.emit("login-done", &msg);
+    let _ = path;
+    Ok(msg)
 }
 
 fn scalar(v: &serde_json::Value, key: &str) -> String {
@@ -151,6 +191,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             start_login,
+            start_bili_login,
             scan,
             stop_scan
         ])

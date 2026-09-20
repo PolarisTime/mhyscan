@@ -225,7 +225,7 @@ pub async fn run_scan(
             let elapsed = now.duration_since(start);
             let mib = bytes_read as f64 / 1024.0 / 1024.0;
             log(format!(
-                "  等待 {:.0}s | 流量 {mib:.1}MB | 帧 {frames} | 识别 {attempts} | 内存 {:.0}MB | config={got_config}",
+                "等待 {:.0}s · 流量 {mib:.1}MB · 帧 {frames} · 识别 {attempts} · 内存 {:.0}MB",
                 elapsed.as_secs_f64(),
                 rss_mb()
             ));
@@ -242,20 +242,64 @@ pub async fn run_scan(
 }
 
 pub fn rss_mb() -> f64 {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("VmRSS:") {
-                if let Some(kb) = rest
-                    .split_whitespace()
-                    .next()
-                    .and_then(|v| v.parse::<f64>().ok())
-                {
-                    return kb / 1024.0;
-                }
-            }
+    memory_stats::memory_stats()
+        .map(|s| s.physical_mem as f64 / 1024.0 / 1024.0)
+        .unwrap_or(0.0)
+}
+
+/// 把文本渲染成二维码 PNG（灰度），供 GUI 展示登录二维码
+pub fn qr_png(text: &str) -> anyhow::Result<Vec<u8>> {
+    use std::io::Write;
+
+    let code = qrcode::QrCode::new(text.as_bytes())?;
+    let colors = code.to_colors();
+    let modules = code.width() as usize;
+    let scale = 6usize;
+    let quiet = 4usize;
+    let size = (modules + quiet * 2) * scale;
+
+    let mut raw = vec![0u8; (size + 1) * size];
+    for y in 0..size {
+        raw[y * (size + 1)] = 0; // filter type
+        for x in 0..size {
+            let mx = x / scale;
+            let my = y / scale;
+            let dark = if mx < quiet || my < quiet || mx >= quiet + modules || my >= quiet + modules {
+                false
+            } else {
+                matches!(
+                    colors[(my - quiet) * modules + (mx - quiet)],
+                    qrcode::types::Color::Dark
+                )
+            };
+            raw[y * (size + 1) + 1 + x] = if dark { 0 } else { 255 };
         }
     }
-    0.0
+
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    enc.write_all(&raw)?;
+    let idat = enc.finish()?;
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&(size as u32).to_be_bytes());
+    ihdr.extend_from_slice(&(size as u32).to_be_bytes());
+    ihdr.extend_from_slice(&[8, 0, 0, 0, 0]); // 8-bit 灰度
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(&mut out, b"IDAT", &idat);
+    chunk(&mut out, b"IEND", &[]);
+    Ok(out)
+}
+
+fn chunk(out: &mut Vec<u8>, tag: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(tag);
+    out.extend_from_slice(data);
+    let mut crc_input = Vec::with_capacity(4 + data.len());
+    crc_input.extend_from_slice(tag);
+    crc_input.extend_from_slice(data);
+    out.extend_from_slice(&crc32fast::hash(&crc_input).to_be_bytes());
 }
 
 /// 离线识别二维码图片
