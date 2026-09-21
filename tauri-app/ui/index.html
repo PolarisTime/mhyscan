@@ -1,313 +1,417 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>mhyscan</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #0b0c0f;
-        --surface: #141619;
-        --surface-2: #1a1d22;
-        --surface-3: #22262d;
-        --line: #252932;
-        --line-soft: #1d2027;
-        --text: #ededf0;
-        --muted: #9ca3af;
-        --dim: #6b7280;
-        --accent: #4f86f7;
-        --accent-2: #3b6fe0;
-        --accent-soft: rgba(79, 134, 247, 0.14);
-        --ok: #3fb950;
-        --warn: #d29922;
-        --err: #f85149;
-        --purple: #bc8cff;
-        --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-        --sans: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-        --r: 10px;
-      }
-      * { box-sizing: border-box; }
-      html, body { height: 100%; margin: 0; }
-      body {
-        background: var(--bg); color: var(--text); font-family: var(--sans);
-        font-size: 13px; line-height: 1.45; -webkit-font-smoothing: antialiased;
-        overflow: hidden;
-      }
-      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-      .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
-      ::-webkit-scrollbar { width: 10px; height: 10px; }
-      ::-webkit-scrollbar-thumb { background: #272b33; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
-      ::-webkit-scrollbar-thumb:hover { background: #333843; background-clip: content-box; }
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>mhyscan - 极速控制台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <script>
+    tailwind.config = { theme: { extend: { fontFamily: { mono: ['JetBrains Mono','Fira Code','Menlo','Consolas','monospace'] } } } }
+  </script>
+  <style>
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-slate-100/90 text-slate-800 antialiased font-sans text-xs h-screen overflow-hidden flex flex-col select-none">
 
-      .app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; }
-
-      /* ============ header ============ */
-      .top {
-        display: flex; align-items: center; gap: 12px; padding: 0 18px;
-        border-bottom: 1px solid var(--line-soft);
-        background: linear-gradient(180deg, rgba(255,255,255,.018), transparent);
-      }
-      .mark {
-        width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
-        background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
-        box-shadow: 0 4px 14px rgba(79,134,247,.34);
-      }
-      .brand { font-weight: 600; letter-spacing: .01em; }
-      .ver { color: var(--dim); font-size: 11px; padding: 2px 7px; border: 1px solid var(--line); border-radius: 999px; }
-      .grow { flex: 1; }
-      .chip {
-        display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px;
-        border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
-        color: var(--muted); font-size: 12px;
-      }
-      .chip b { color: var(--text); font-weight: 500; }
-      .dot { width: 7px; height: 7px; border-radius: 50%; background: #4b5563; }
-      .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,.16); }
-      .dot.busy { background: var(--warn); box-shadow: 0 0 0 3px rgba(210,153,34,.16); }
-
-      /* ============ layout ============ */
-      .body { display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
-      .side {
-        border-right: 1px solid var(--line-soft); padding: 16px; overflow: auto;
-        display: flex; flex-direction: column; gap: 20px;
-        background: linear-gradient(180deg, rgba(255,255,255,.012), transparent 240px);
-      }
-      .sec > h2 {
-        margin: 0 0 10px; font-size: 11px; font-weight: 600; letter-spacing: .09em;
-        text-transform: uppercase; color: var(--dim);
-      }
-      .sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-      .sec-head h2 { margin: 0; }
-      .link { color: var(--accent); font-size: 12px; }
-      .link:hover { text-decoration: underline; }
-      .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
-
-      /* accounts */
-      .acct { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 8px; cursor: pointer; transition: background .12s; }
-      .acct:hover { background: var(--surface-2); }
-      .acct + .acct { margin-top: 1px; }
-      .cb { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #3a4252; display: grid; place-items: center; flex: none; transition: .12s; }
-      .acct.on .cb { border-color: var(--accent); background: transparent; }
-      .acct.on .cb::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-      .acct .name { flex: 1; min-width: 0; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .acct .name .uid { display: block; color: var(--dim); font-family: var(--mono); font-size: 10.5px; }
-      .acct .type { color: var(--muted); font-size: 11px; padding: 1px 7px; border: 1px solid var(--line); border-radius: 5px; flex: none; }
-
-      /* fields */
-      .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-      .field:last-child { margin-bottom: 0; }
-      .field > label { color: var(--muted); font-size: 12px; }
-      select, input[type="text"] {
-        width: 100%; height: 34px; background: var(--surface); color: var(--text);
-        border: 1px solid var(--line); border-radius: 9px; padding: 0 10px; font-size: 12.5px;
-        outline: none; transition: border-color .12s, box-shadow .12s;
-      }
-      select {
-        appearance: none; background-image:
-          linear-gradient(45deg, transparent 50%, var(--dim) 50%),
-          linear-gradient(135deg, var(--dim) 50%, transparent 50%);
-        background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px;
-        background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
-      }
-      select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-      select:disabled { color: var(--dim); }
-      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-      input[type="range"] { width: 100%; accent-color: var(--accent); }
-      .range-val { color: var(--accent); font-variant-numeric: tabular-nums; }
-
-      .telrow { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; }
-      .switch { width: 34px; height: 20px; border-radius: 999px; background: #2a303c; position: relative; cursor: pointer; transition: .15s; }
-      .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #8b93a3; transition: .15s; }
-      .switch.on { background: var(--accent); }
-      .switch.on::after { left: 16px; background: #fff; }
-
-      .cta { margin-top: auto; padding-top: 4px; }
-      .start {
-        width: 100%; height: 42px; border-radius: 10px; font-weight: 600; font-size: 13.5px;
-        background: var(--accent); color: #fff; box-shadow: 0 6px 18px rgba(79,134,247,.3);
-        transition: filter .12s, transform .05s;
-      }
-      .start:hover { filter: brightness(1.08); }
-      .start:active { transform: translateY(1px); }
-      .start.stop { background: var(--surface-2); color: var(--text); border: 1px solid var(--line); box-shadow: none; }
-      .hint { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 9px; }
-      .hint b { color: var(--muted); font-weight: 500; }
-
-      /* ============ main ============ */
-      .main {
-        padding: 16px 18px; display: grid; gap: 16px; min-height: 0;
-        grid-template-rows: auto minmax(170px, 1fr) auto minmax(150px, 1fr);
-      }
-      .metrics { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
-      .metric { padding: 13px 16px; border-left: 1px solid var(--line-soft); }
-      .metric:first-child { border-left: 0; }
-      .metric .k { color: var(--dim); font-size: 11px; letter-spacing: .04em; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
-      .metric .k .dot { width: 6px; height: 6px; }
-      .metric .v { font-size: 21px; font-weight: 600; letter-spacing: -.01em; }
-      .metric .v.live { color: var(--ok); }
-
-      .monitor {
-        position: relative; min-height: 0; border: 1px solid var(--line); border-radius: 14px;
-        background: radial-gradient(520px 200px at 50% 0%, rgba(79,134,247,.06), transparent 70%), var(--surface);
-        display: grid; place-items: center; overflow: hidden;
-      }
-      .monitor .grid-bg {
-        position: absolute; inset: 0; opacity: .4;
-        background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
-        background-size: 30px 30px;
-        -webkit-mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
-        mask-image: radial-gradient(circle at 50% 50%, #000 0%, transparent 72%);
-      }
-      .monitor .beam { position: absolute; left: 0; right: 0; top: 0; height: 1px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0; }
-      .monitor.live .beam { opacity: 1; animation: beam 2.6s cubic-bezier(.4,0,.6,1) infinite; }
-      .monitor .ph { position: relative; text-align: center; color: var(--dim); }
-      .monitor .ph .icon { width: 46px; height: 46px; margin: 0 auto 12px; border-radius: 12px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); transition: .2s; }
-      .monitor .ph .t { color: var(--text); font-size: 13.5px; font-weight: 500; margin-bottom: 5px; }
-      .monitor .ph .s { font-size: 12px; }
-      .monitor.live .ph .icon { color: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-      @keyframes beam { 0% { top: 0; } 100% { top: 100%; } }
-
-      .panel-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
-      .panel-head .t { flex: 1; font-weight: 500; font-size: 12.5px; }
-      .panel-head .n { color: var(--dim); font-size: 12px; }
-
-      .rec { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; align-items: center; padding: 13px 16px; transition: background .12s; }
-      .rec + .rec { border-top: 1px solid var(--line-soft); }
-      .rec:hover { background: var(--surface-2); }
-      .rec .code { font-family: var(--mono); font-size: 13px; display: flex; align-items: center; gap: 9px; }
-      .rec .code .tick { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(63,185,80,.14); }
-      .rec .meta { color: var(--dim); font-size: 11.5px; margin-top: 4px; padding-left: 15px; }
-      .rec .who { color: var(--ok); font-size: 12px; white-space: nowrap; }
-      .rec .time { color: var(--dim); font-size: 11px; font-family: var(--mono); }
-      .empty { padding: 26px; text-align: center; color: var(--dim); font-size: 12px; }
-
-      .term { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #0b0e14; }
-      .term .panel-head { background: var(--surface); }
-      .tabs { display: flex; gap: 16px; }
-      .tab { color: var(--dim); font-size: 11px; letter-spacing: .06em; padding: 3px 0; border-bottom: 1.5px solid transparent; cursor: pointer; }
-      .tab:hover { color: var(--muted); }
-      .tab.on { color: var(--text); border-color: var(--accent); }
-      .term .tools { margin-left: auto; color: var(--dim); font-size: 11.5px; display: flex; gap: 16px; }
-      .term .tools .link { color: var(--dim); }
-      .term .tools .link:hover { color: var(--accent); }
-      .term .body { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.75; }
-      .ln { display: flex; gap: 12px; white-space: pre-wrap; word-break: break-all; }
-      .ln .ts { color: #3f4757; flex: none; }
-      .ln .tag { flex: none; width: 58px; color: var(--muted); }
-      .ln.STREAM .tag { color: var(--purple); }
-      .ln.QR .tag { color: #79c0ff; }
-      .ln.LOGIN .tag { color: var(--ok); }
-      .ln.ERROR .tag { color: var(--err); }
-      .ln .msg { color: #bec6d4; }
-      .ln.hide { display: none; }
-
-      .modal { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; place-items: center; z-index: 50; }
-      .modal.show { display: grid; }
-      .modal-box { width: 320px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: center; }
-      .modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; font-size: 13px; }
-      .qr-img { width: 240px; height: 240px; background: #fff; border-radius: 10px; padding: 8px; }
-      .modal-status { margin-top: 10px; color: var(--muted); font-size: 12.5px; }
-      .qr-text { margin-top: 6px; color: var(--dim); font-size: 10.5px; word-break: break-all; max-height: 40px; overflow: auto; }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <header class="top">
-        <span class="mark">M</span>
-        <span class="brand">mhyscan</span>
-        <span class="ver num">v0.1.0</span>
-        <span class="grow"></span>
-        <div class="chip"><span id="dot" class="dot ok"></span><span id="status">就绪</span></div>
-        <div class="chip"><span id="platChip">B站</span> <span style="color:var(--line)">·</span> 延迟 <b class="num" id="latency">24</b>ms</div>
-      </header>
-
-      <div class="body">
-        <aside class="side">
-          <div class="sec">
-            <div class="sec-head"><h2>账号</h2><span style="display:flex;gap:10px"><span id="login" class="link">米游社登录</span><span id="biliLogin" class="link">B站登录</span></span></div>
-            <div id="accounts" class="panel" style="padding:5px"></div>
-          </div>
-
-          <div class="sec">
-            <h2>直播流</h2>
-            <div class="field">
-              <label>平台</label>
-              <select id="platform"><option value="bili">B站</option><option value="douyin">抖音</option></select>
-            </div>
-            <div class="field">
-              <label>房间号 RID</label>
-              <input id="rid" type="text" value="6" />
-            </div>
-            <div class="two">
-              <div class="field"><label>画质</label><select id="quality"><option>720P</option><option>原画 1080P</option></select></div>
-              <div class="field"><label>引擎</label><select disabled><option>rxing</option></select></div>
-            </div>
-            <div class="field">
-              <label>抽帧频率 · 每 <span id="iv" class="range-val">3</span> 帧</label>
-              <input id="interval" type="range" min="1" max="10" value="3" />
-            </div>
-          </div>
-
-          <div class="sec">
-            <h2>设置</h2>
-            <div class="panel telrow"><span style="color:var(--muted)">匿名遥测</span><span id="tel" class="switch"></span></div>
-          </div>
-
-          <div class="cta">
-            <button id="start" class="start">启动扫描</button>
-            <div class="hint"><span>Space 启停</span><span>当前账号 <b id="ready">—</b></span></div>
-          </div>
-        </aside>
-
-        <main class="main">
-          <div class="metrics">
-            <div class="metric"><div class="k">运行时长</div><div class="v num" id="mTime">00:00:00</div></div>
-            <div class="metric"><div class="k">已解码帧</div><div class="v num" id="mFrames">0</div></div>
-            <div class="metric"><div class="k">识别二维码</div><div class="v num" id="mQr">0</div></div>
-            <div class="metric"><div class="k"><span id="streamDot" class="dot"></span>拉流状态</div><div class="v" id="mStream" style="font-size:16px">未连接</div></div>
-          </div>
-
-          <div id="monitor" class="monitor">
-            <div class="grid-bg"></div>
-            <div class="beam"></div>
-            <div class="ph">
-              <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M8 12h8"/></svg></div>
-              <div class="t" id="mTitle">未启动识别监视</div>
-              <div class="s" id="mHint">点击左侧「启动扫描」开始监听直播流</div>
-            </div>
-          </div>
-
-          <div class="panel">
-            <div class="panel-head"><span class="t">识别与抢码记录</span><span class="n num" id="recCount">0 条</span></div>
-            <div id="records"><div class="empty">暂无记录，等待直播间出现登录二维码…</div></div>
-          </div>
-
-          <div class="term">
-            <div class="panel-head">
-              <div class="tabs" id="tabs">
-                <span class="tab on" data-tab="ALL">ALL</span>
-                <span class="tab" data-tab="STREAM">STREAM</span>
-                <span class="tab" data-tab="QR">QR</span>
-                <span class="tab" data-tab="LOGIN">LOGIN</span>
-              </div>
-              <span class="tools"><span id="clear" class="link">清空</span></span>
-            </div>
-            <div id="log" class="body"></div>
-          </div>
-        </main>
+  <header class="h-9 bg-white border-b border-slate-200 px-3 flex items-center justify-between shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+    <div class="flex items-center gap-2">
+      <div class="w-5 h-5 rounded bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-[11px] shadow-xs">M</div>
+      <div class="flex items-center gap-1.5">
+        <span class="font-bold text-slate-900 tracking-tight text-xs">mhyscan</span>
+        <span class="bg-blue-50 text-blue-600 border border-blue-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-medium leading-4">v0.1.0</span>
       </div>
     </div>
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-50 border border-slate-200 text-[11px]">
+        <span id="global-indicator" class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+        <span id="global-status-text" class="text-slate-700 font-medium">就绪</span>
+      </div>
+      <div class="flex items-center gap-1 text-[11px] text-slate-500">
+        <span>延迟:</span><span id="ping-text" class="font-mono text-emerald-600 font-semibold">--</span>
+      </div>
+      <div class="h-3 w-[1px] bg-slate-200"></div>
+      <button onclick="openLoginModal()" class="text-slate-600 hover:text-blue-600 flex items-center gap-1 text-[11px] transition">
+        <i class="fa-regular fa-user-circle text-xs"></i><span id="nav-user-label">未绑定账号</span>
+      </button>
+    </div>
+  </header>
 
-    <script type="module" src="./main.js"></script>
+  <main class="flex-1 flex overflow-hidden p-2 gap-2">
+    <aside class="w-60 bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
+      <div class="p-2 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <div class="w-6 h-6 rounded-full bg-slate-200 border border-white shadow-xs flex items-center justify-center text-slate-500 shrink-0"><i class="fa-solid fa-user text-[10px]"></i></div>
+          <div class="min-w-0">
+            <div id="sidebar-account-name" class="font-semibold text-slate-800 text-[11px] leading-tight truncate">暂无账号绑定</div>
+            <div id="sidebar-account-sub" class="text-[9px] text-slate-400 leading-none mt-0.5">扫码极速登录</div>
+          </div>
+        </div>
+        <button onclick="openLoginModal()" class="px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 rounded border border-blue-200 transition shrink-0">扫码登录</button>
+      </div>
 
-    <div id="modal" class="modal">
-      <div class="modal-box">
-        <div class="modal-head"><span id="modalTitle">扫码登录</span><span id="modalClose" class="link">关闭</span></div>
-        <img id="qrImg" class="qr-img" alt="二维码" />
-        <div id="modalStatus" class="modal-status">正在生成二维码…</div>
-        <div id="qrText" class="qr-text"></div>
+      <div class="p-2 space-y-2 flex-1 overflow-y-auto">
+        <div>
+          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">直播平台</label>
+          <div class="relative">
+            <select id="platform-select" class="w-full bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-blue-500 rounded py-1 px-2 text-xs appearance-none outline-none transition pr-6">
+              <option value="bili">哔哩哔哩 (B站)</option>
+              <option value="douyin">抖音直播</option>
+            </select>
+            <i class="fa-solid fa-chevron-down absolute right-2 top-2 text-[9px] text-slate-400 pointer-events-none"></i>
+          </div>
+        </div>
+        <div>
+          <div class="flex justify-between items-center mb-0.5">
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">房间号 (RID)</label>
+            <span class="text-[9px] text-slate-400">支持短号/长号</span>
+          </div>
+          <div class="relative">
+            <input type="text" id="rid-input" value="6" placeholder="输入直播房间号" class="w-full bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-blue-500 rounded py-1 px-2 text-xs font-mono outline-none transition" />
+            <span class="absolute right-2 top-1.5 text-[9px] text-slate-400 font-mono">LIVE</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="p-2 border-t border-slate-200 bg-slate-50/70 shrink-0">
+        <button id="toggle-scan-btn" onclick="toggleScan()" class="w-full py-1.5 px-2.5 rounded bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-xs transition">
+          <i id="btn-icon" class="fa-solid fa-play text-[9px]"></i><span id="btn-text">启动扫描监控</span>
+        </button>
+        <div class="flex items-center justify-between text-[10px] text-slate-400 mt-1 px-0.5">
+          <span>快捷键: <kbd class="px-1 py-0.2 bg-white border border-slate-200 rounded text-[9px] font-mono">Space</kbd></span>
+          <span id="account-hint">账号就绪</span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="flex-1 flex flex-col min-w-0 gap-2 overflow-hidden">
+      <div class="grid grid-cols-4 gap-2 shrink-0">
+        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
+          <div class="w-7 h-7 rounded bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><i class="fa-regular fa-clock text-xs"></i></div>
+          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">运行时长</div><div id="stat-runtime" class="text-xs font-bold font-mono text-slate-800 truncate leading-tight mt-0.5">00:00:00</div></div>
+        </div>
+        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
+          <div class="w-7 h-7 rounded bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-layer-group text-xs"></i></div>
+          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">已解码帧数</div><div id="stat-frames" class="text-xs font-bold font-mono text-slate-800 truncate leading-tight mt-0.5">0</div></div>
+        </div>
+        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
+          <div class="w-7 h-7 rounded bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-qrcode text-xs"></i></div>
+          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">识别二维码</div><div id="stat-qr" class="text-xs font-bold font-mono text-emerald-600 truncate leading-tight mt-0.5">0</div></div>
+        </div>
+        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
+          <div id="link-icon-box" class="w-7 h-7 rounded bg-slate-100 text-slate-500 flex items-center justify-center shrink-0"><i id="link-icon" class="fa-solid fa-circle-notch text-xs"></i></div>
+          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">拉流状态</div><div id="stat-link" class="text-xs font-bold text-slate-600 truncate leading-tight mt-0.5">未连接</div></div>
+        </div>
+      </div>
+
+      <div class="h-36 bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
+        <div class="h-7 border-b border-slate-100 px-2 flex items-center justify-between bg-slate-50/70 shrink-0">
+          <div class="flex items-center gap-1.5">
+            <span class="font-bold text-slate-800 text-[11px]">识别与代登流水</span>
+            <span id="qr-count-badge" class="bg-slate-200 text-slate-600 text-[9px] px-1.5 py-0.2 rounded-full font-mono">0 条</span>
+          </div>
+          <button onclick="clearQREvents()" class="text-[10px] text-slate-400 hover:text-rose-600 transition flex items-center gap-1"><i class="fa-regular fa-trash-can"></i><span>清空</span></button>
+        </div>
+        <div id="qr-feed" class="flex-1 overflow-y-auto p-1.5 space-y-1">
+          <div id="qr-empty-hint" class="h-full flex flex-col items-center justify-center text-slate-400 py-3">
+            <i class="fa-solid fa-inbox text-base text-slate-300 mb-0.5"></i>
+            <span class="text-[10px]">暂无识别记录，等待捕获登录二维码...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-1 bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col min-h-0 overflow-hidden">
+        <div class="h-7 border-b border-slate-200 px-2 flex items-center justify-between bg-slate-50/80 shrink-0">
+          <div class="flex items-center gap-0.5" id="log-tabs">
+            <button onclick="filterLogs(event,'ALL')" class="log-tab-btn active px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white text-blue-600 shadow-xs border border-slate-200">全部</button>
+            <button onclick="filterLogs(event,'STREAM')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">STREAM</button>
+            <button onclick="filterLogs(event,'QR')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">QR</button>
+            <button onclick="filterLogs(event,'LOGIN')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">LOGIN</button>
+            <button onclick="filterLogs(event,'ERROR')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">ERROR</button>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <div class="relative flex items-center">
+              <i class="fa-solid fa-magnifying-glass absolute left-1.5 text-[8px] text-slate-400"></i>
+              <input type="text" id="log-search-input" oninput="searchLogs(this.value)" placeholder="搜索日志..." class="pl-4 pr-1 py-0.5 text-[9px] bg-white border border-slate-200 rounded focus:border-blue-500 outline-none w-24 transition" />
+            </div>
+            <button onclick="exportLogs()" title="导出日志" class="text-slate-400 hover:text-slate-700 text-[10px] px-1"><i class="fa-solid fa-download"></i></button>
+            <button onclick="clearLogs()" title="清空终端" class="text-slate-400 hover:text-rose-600 text-[10px] px-1"><i class="fa-solid fa-ban"></i></button>
+          </div>
+        </div>
+        <div id="terminal-body" class="flex-1 p-2 font-mono text-[10px] leading-4 overflow-y-auto bg-slate-950 text-slate-300 space-y-0.5 select-text">
+          <div class="text-slate-500 font-sans text-[9px] pb-1 border-b border-slate-800/80 mb-1 flex justify-between">
+            <span>[mhyscan Engine - 核心引擎就绪]</span><span id="current-clock">--:--:--</span>
+          </div>
+        </div>
       </div>
     </div>
-  </body>
+  </main>
+
+  <div id="login-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs hidden flex items-center justify-center z-50 p-4">
+    <div class="bg-white w-full max-w-xs rounded-xl border border-slate-200 shadow-2xl p-3.5 flex flex-col items-center">
+      <div class="w-full flex justify-between items-center mb-2">
+        <h3 id="modal-title" class="font-bold text-slate-900 text-xs">米哈游通行证扫码登录</h3>
+        <button onclick="closeLoginModal()" class="text-slate-400 hover:text-slate-600 w-5 h-5 flex items-center justify-center rounded"><i class="fa-solid fa-xmark text-xs"></i></button>
+      </div>
+      <div class="w-36 h-36 bg-slate-50 border-2 border-dashed border-slate-200 rounded-lg flex items-center justify-center p-1 overflow-hidden">
+        <img id="qr-img" class="w-32 h-32 rounded shadow-xs hidden" alt="QR" />
+        <i id="qr-placeholder" class="fa-solid fa-qrcode text-3xl text-slate-300"></i>
+      </div>
+      <p id="qr-hint" class="text-[10px] text-slate-500 mt-2 text-center">正在生成二维码…</p>
+      <div class="w-full mt-2.5 pt-2 border-t border-slate-100 flex gap-2">
+        <button onclick="openBiliLoginModal()" class="flex-1 py-1 bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-medium rounded transition">B站登录</button>
+        <button onclick="closeLoginModal()" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium rounded transition">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const IN_TAURI = typeof window.__TAURI__ !== "undefined";
+    const TAURI = IN_TAURI ? window.__TAURI__ : null;
+
+    let isScanning = false, timerInterval = null, secondsElapsed = 0;
+    let decodedFrames = 0, qrRecognizedCount = 0;
+    let currentLogFilter = 'ALL', currentLogQuery = '';
+    const logsData = [];
+
+    setInterval(() => {
+      const el = document.getElementById('current-clock');
+      if (el) el.innerText = new Date().toLocaleTimeString();
+    }, 1000);
+
+    const formatTimer = (s) => {
+      const h = Math.floor(s / 3600).toString().padStart(2, '0');
+      const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
+      const sec = (s % 60).toString().padStart(2, '0');
+      return `${h}:${m}:${sec}`;
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') { e.preventDefault(); toggleScan(); }
+    });
+
+    function classify(msg) {
+      if (/错误|失败|Error|异常/.test(msg)) return 'ERROR';
+      if (/抢码|登录|scanQRLogin|confirm|账号/.test(msg)) return 'LOGIN';
+      if (/二维码|识别|rxing|ticket/i.test(msg)) return 'QR';
+      if (/直播流|拉流|FLV|流地址|B站|抖音|预热|获取到|候选/.test(msg)) return 'STREAM';
+      return 'SYSTEM';
+    }
+
+    const PROGRESS_RE = /等待 (\d+)s · 流量 ([\d.]+)MB · 帧 (\d+) · 识别 (\d+) · 内存 (\d+)MB/;
+    function applyProgress(msg) {
+      const m = msg.match(PROGRESS_RE);
+      if (!m) return false;
+      secondsElapsed = parseInt(m[1], 10);
+      decodedFrames = parseInt(m[3], 10);
+      qrRecognizedCount = parseInt(m[4], 10);
+      document.getElementById('stat-runtime').innerText = formatTimer(secondsElapsed);
+      document.getElementById('stat-frames').innerText = decodedFrames.toLocaleString();
+      document.getElementById('stat-qr').innerText = qrRecognizedCount;
+      return true;
+    }
+
+    function onScanLog(msg) {
+      if (applyProgress(msg)) return; // 进度只更新指标
+      addLog(classify(msg), msg);
+      const m = msg.match(/(?:tk=|ticket=)([0-9a-fA-F-]{8,})/);
+      if (m) addQrRecord(m[1]);
+    }
+
+    function addQrRecord(ticket) {
+      const emptyHint = document.getElementById('qr-empty-hint');
+      if (emptyHint) emptyHint.remove();
+      const rid = document.getElementById('rid-input').value.trim() || '6';
+      const item = document.createElement('div');
+      item.className = 'flex items-center justify-between p-1 rounded bg-slate-50 border border-slate-200/80 hover:bg-blue-50/40 transition text-slate-700 text-xs';
+      item.innerHTML = `
+        <div class="flex items-center gap-1.5 min-w-0">
+          <span class="font-mono text-[9px] text-slate-400">${new Date().toLocaleTimeString()}</span>
+          <span class="font-mono font-semibold text-blue-600 text-[10px] truncate">${ticket.slice(0, 16)}</span>
+          <span class="text-[9px] text-slate-400">RID:${rid}</span>
+        </div>
+        <button class="text-[9px] px-1 py-0.2 rounded bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition" onclick="copyText('${ticket}', this)">复制</button>`;
+      document.getElementById('qr-feed').prepend(item);
+      document.getElementById('qr-count-badge').innerText = `${qrRecognizedCount} 条`;
+    }
+
+    function copyText(text, btn) {
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.resolve()).finally(() => {
+        const prev = btn.innerText; btn.innerText = '已复制';
+        setTimeout(() => (btn.innerText = prev), 1000);
+      });
+    }
+    function copyTicket(t, b) { copyText(t, b); }
+
+    function clearQREvents() {
+      document.getElementById('qr-feed').innerHTML = `
+        <div id="qr-empty-hint" class="h-full flex flex-col items-center justify-center text-slate-400 py-3">
+          <i class="fa-solid fa-inbox text-base text-slate-300 mb-0.5"></i>
+          <span class="text-[10px]">暂无识别记录，等待捕获登录二维码...</span>
+        </div>`;
+      qrRecognizedCount = 0;
+      document.getElementById('qr-count-badge').innerText = '0 条';
+      document.getElementById('stat-qr').innerText = '0';
+    }
+
+    function addLog(category, message) {
+      const entry = { time: new Date().toLocaleTimeString(), category, message };
+      logsData.push(entry);
+      renderSingleLog(entry);
+    }
+
+    function renderSingleLog(entry) {
+      if (currentLogFilter !== 'ALL' && entry.category !== currentLogFilter) return;
+      if (currentLogQuery && !entry.message.toLowerCase().includes(currentLogQuery.toLowerCase())) return;
+      const badge = {
+        STREAM: '<span class="text-sky-400 font-bold">[STREAM]</span>',
+        QR: '<span class="text-purple-400 font-bold">[QR]</span>',
+        LOGIN: '<span class="text-emerald-400 font-bold">[LOGIN]</span>',
+        ERROR: '<span class="text-rose-400 font-bold">[ERROR]</span>',
+      }[entry.category] || '<span class="text-slate-400 font-bold">[SYSTEM]</span>';
+      const body = document.getElementById('terminal-body');
+      const row = document.createElement('div');
+      row.className = 'flex items-start gap-1 py-0.2 hover:bg-slate-900/80 px-0.5 rounded transition';
+      row.innerHTML = `<span class="text-slate-500 shrink-0">${entry.time}</span>${badge}<span class="text-slate-200 break-all"></span>`;
+      row.lastChild.textContent = entry.message;
+      body.appendChild(row);
+      body.scrollTop = body.scrollHeight;
+    }
+
+    function filterLogs(ev, category) {
+      currentLogFilter = category;
+      document.querySelectorAll('.log-tab-btn').forEach((b) => {
+        b.classList.remove('active', 'bg-white', 'text-blue-600', 'shadow-xs', 'border', 'border-slate-200');
+        b.classList.add('text-slate-600');
+      });
+      ev.target.classList.add('active', 'bg-white', 'text-blue-600', 'shadow-xs', 'border', 'border-slate-200');
+      ev.target.classList.remove('text-slate-600');
+      reRenderAllLogs();
+    }
+    function searchLogs(v) { currentLogQuery = v.trim(); reRenderAllLogs(); }
+    function reRenderAllLogs() {
+      const body = document.getElementById('terminal-body');
+      body.innerHTML = `<div class="text-slate-500 font-sans text-[9px] pb-1 border-b border-slate-800/80 mb-1 flex justify-between"><span>[过滤: ${currentLogFilter}]</span><span>${new Date().toLocaleTimeString()}</span></div>`;
+      logsData.forEach(renderSingleLog);
+    }
+    function clearLogs() { logsData.length = 0; reRenderAllLogs(); }
+    function exportLogs() {
+      const txt = logsData.map((l) => `[${l.time}] [${l.category}] ${l.message}`).join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+      a.download = `mhyscan_log_${Date.now()}.txt`;
+      a.click();
+    }
+
+    /* ---------- 账号 ---------- */
+    function setAccount(a) {
+      if (a) {
+        document.getElementById('sidebar-account-name').innerText = a.name;
+        document.getElementById('sidebar-account-sub').innerText = `UID: ${a.uid} (${a.type || '官服'})`;
+        document.getElementById('nav-user-label').innerText = a.name;
+        document.getElementById('account-hint').innerText = `已就绪 (UID: ${a.uid})`;
+      } else {
+        document.getElementById('sidebar-account-name').innerText = '暂无账号绑定';
+        document.getElementById('sidebar-account-sub').innerText = '扫码极速登录';
+        document.getElementById('nav-user-label').innerText = '未绑定账号';
+        document.getElementById('account-hint').innerText = '账号就绪';
+      }
+    }
+    async function loadAccounts() {
+      if (!IN_TAURI) return;
+      try {
+        const list = await TAURI.core.invoke('list_accounts');
+        setAccount(list[0] || null);
+      } catch (e) { addLog('ERROR', '账号读取失败: ' + e); }
+    }
+
+    /* ---------- 登录弹窗 ---------- */
+    function showQr(title) {
+      document.getElementById('modal-title').innerText = title;
+      document.getElementById('qr-img').classList.add('hidden');
+      document.getElementById('qr-placeholder').classList.remove('hidden');
+      document.getElementById('qr-hint').innerText = '正在生成二维码…';
+      document.getElementById('login-modal').classList.remove('hidden');
+    }
+    function onQr(dataUrl) {
+      const img = document.getElementById('qr-img');
+      img.src = dataUrl; img.classList.remove('hidden');
+      document.getElementById('qr-placeholder').classList.add('hidden');
+      document.getElementById('qr-hint').innerText = '请用对应 App 扫码授权';
+    }
+    async function openLoginModal() {
+      showQr('米哈游通行证扫码登录');
+      if (IN_TAURI) { try { await TAURI.core.invoke('start_login'); } catch (e) { document.getElementById('qr-hint').innerText = '失败: ' + e; } }
+      else document.getElementById('qr-hint').innerText = '演示模式：请用米游社 App 扫码';
+    }
+    async function openBiliLoginModal() {
+      showQr('B站扫码登录 (拉流凭证)');
+      if (IN_TAURI) { try { await TAURI.core.invoke('start_bili_login'); } catch (e) { document.getElementById('qr-hint').innerText = '失败: ' + e; } }
+      else document.getElementById('qr-hint').innerText = '演示模式：请用 B站 App 扫码';
+    }
+    function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
+
+    /* ---------- 启停 ---------- */
+    function setScanUI(on) {
+      isScanning = on;
+      const btn = document.getElementById('toggle-scan-btn');
+      btn.classList.toggle('bg-blue-600', !on); btn.classList.toggle('hover:bg-blue-700', !on);
+      btn.classList.toggle('bg-rose-600', on); btn.classList.toggle('hover:bg-rose-700', on);
+      document.getElementById('btn-icon').className = on ? 'fa-solid fa-stop text-[9px]' : 'fa-solid fa-play text-[9px]';
+      document.getElementById('btn-text').innerText = on ? '停止扫描监控' : '启动扫描监控';
+      const box = document.getElementById('link-icon-box'), icon = document.getElementById('link-icon'), link = document.getElementById('stat-link');
+      box.className = on ? 'w-7 h-7 rounded bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0' : 'w-7 h-7 rounded bg-slate-100 text-slate-500 flex items-center justify-center shrink-0';
+      icon.className = on ? 'fa-solid fa-wifi text-xs' : 'fa-solid fa-circle-notch text-xs';
+      link.className = on ? 'text-xs font-bold text-emerald-600 truncate leading-tight mt-0.5' : 'text-xs font-bold text-slate-600 truncate leading-tight mt-0.5';
+      link.innerText = on ? '已连接拉流' : '未连接';
+      document.getElementById('global-indicator').className = on ? 'w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse' : 'w-1.5 h-1.5 rounded-full bg-slate-400';
+      document.getElementById('global-status-text').innerText = on ? '监控中' : '已挂起';
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      if (on) timerInterval = setInterval(() => { secondsElapsed++; document.getElementById('stat-runtime').innerText = formatTimer(secondsElapsed); }, 1000);
+    }
+
+    async function toggleScan() {
+      const platform = document.getElementById('platform-select').value;
+      const rid = document.getElementById('rid-input').value.trim();
+
+      if (!IN_TAURI) {
+        setScanUI(!isScanning);
+        addLog('STREAM', isScanning ? `开始拉取 [${platform}] 房间 RID-${rid}...` : '监控已停止');
+        return;
+      }
+      if (isScanning) { await TAURI.core.invoke('stop_scan'); return; }
+      if (!rid) { addLog('ERROR', '请先填写房间号 RID'); return; }
+      setScanUI(true);
+      addLog('STREAM', `开始拉取 [${platform}] 房间 RID-${rid}...`);
+      try { await TAURI.core.invoke('scan', { platform, rid, timeout: 86400 }); }
+      catch (e) { addLog('ERROR', String(e)); setScanUI(false); }
+    }
+
+    /* ---------- 初始化 ---------- */
+    (async () => {
+      if (IN_TAURI) {
+        await TAURI.event.listen('scan-log', (e) => onScanLog(e.payload));
+        await TAURI.event.listen('scan-done', (e) => { addLog('SYSTEM', String(e.payload)); setScanUI(false); });
+        await TAURI.event.listen('login-qr', (e) => onQr(e.payload));
+        await TAURI.event.listen('login-qr-text', (e) => console.debug('qr text', e.payload));
+        await TAURI.event.listen('login-status', (e) => { document.getElementById('qr-hint').innerText = '状态: ' + e.payload; });
+        await TAURI.event.listen('login-done', (e) => {
+          document.getElementById('qr-hint').innerText = '登录成功: ' + e.payload;
+          addLog('LOGIN', '登录成功: ' + e.payload);
+          loadAccounts();
+          setTimeout(closeLoginModal, 1000);
+        });
+        await loadAccounts();
+        addLog('SYSTEM', '控制台就绪，等待启动扫描。');
+      } else {
+        addLog('SYSTEM', '演示模式 (未连接后端)');
+      }
+      setInterval(() => { document.getElementById('ping-text').innerText = `${Math.floor(Math.random() * 20 + 10)}ms`; }, 2000);
+    })();
+  </script>
+</body>
 </html>

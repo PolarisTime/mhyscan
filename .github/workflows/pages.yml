@@ -5,7 +5,6 @@ on:
     branches: [main, master]
     paths:
       - "tauri-app/ui/**"
-      - "scripts/build-demo.mjs"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -23,15 +22,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Build single-file demo
-        run: node scripts/build-demo.mjs
       - name: Stage site
         run: |
           mkdir -p _site
-          cp tauri-app/ui/demo.html _site/index.html
+          cp tauri-app/ui/index.html _site/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
