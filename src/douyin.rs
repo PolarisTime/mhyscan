@@ -70,9 +70,7 @@ pub async fn get_candidates(room_id: &str) -> Result<Vec<String>> {
              可用环境变量 MHYSCAN_DOUYIN_COOKIE 或 Config/douyin_cookie.txt 覆盖"
         );
     }
-    let data = resp
-        .pointer("/data/data/0")
-        .ok_or_else(|| anyhow::anyhow!("缺少直播间数据"))?;
+    let data = room_data(&resp).ok_or_else(|| anyhow::anyhow!("缺少直播间数据"))?;
     let status = data.get("status").and_then(Value::as_i64).unwrap_or(-1);
     match status {
         2 => {}
@@ -82,7 +80,7 @@ pub async fn get_candidates(room_id: &str) -> Result<Vec<String>> {
 
     let urls = extract_stream_urls(data);
     if urls.is_empty() {
-        bail!("未找到抖音 FLV 流地址（可能仅有 HLS / 未开播 / cookie 失效）");
+        bail!("未找到抖音可用的 FLV/HLS 流地址（可能未开播、cookie 失效或被风控拦截）");
     }
     Ok(urls)
 }
@@ -94,11 +92,54 @@ pub async fn get_flv_url(room_id: &str) -> Result<String> {
 }
 
 /// 从直播间数据里收集全部 FLV 地址：优先 `origin/main/flv`，再收其它 CDN/清晰度。
+/// 兼容 webcast/room/web/enter（data.data[0]）与 reflow（data.room）两种返回
+fn room_data(resp: &Value) -> Option<&Value> {
+    resp.pointer("/data/data/0")
+        .or_else(|| resp.pointer("/data/room"))
+}
+
 fn extract_stream_urls(data: &Value) -> Vec<String> {
     let mut out = Vec::new();
     let Some(stream_url) = data.get("stream_url") else {
         return out;
     };
+
+    // 主流形状：flv_pull_url / hls_pull_url_map（清晰度 → 地址）
+    if let Some(map) = stream_url.get("flv_pull_url").and_then(Value::as_object) {
+        let default = stream_url
+            .get("default_resolution")
+            .and_then(Value::as_str)
+            .unwrap_or("FULL_HD1");
+        for quality in quality_order(default) {
+            if let Some(Value::String(u)) = map.get(quality) {
+                push_unique(&mut out, u);
+            }
+        }
+        for v in map.values() {
+            if let Some(u) = v.as_str() {
+                push_unique(&mut out, u);
+            }
+        }
+    }
+    // HLS 回退（引擎已支持 HLS(TS) 分片）
+    if out.is_empty() {
+        if let Some(map) = stream_url.get("hls_pull_url_map").and_then(Value::as_object) {
+            let default = stream_url
+                .get("default_resolution")
+                .and_then(Value::as_str)
+                .unwrap_or("FULL_HD1");
+            for quality in quality_order(default) {
+                if let Some(Value::String(u)) = map.get(quality) {
+                    push_unique(&mut out, u);
+                }
+            }
+            for v in map.values() {
+                if let Some(u) = v.as_str() {
+                    push_unique(&mut out, u);
+                }
+            }
+        }
+    }
 
     // 新版：pull_datas.<quality>.stream_data（JSON 字符串）
     if let Some(map) = stream_url.get("pull_datas").and_then(Value::as_object) {
@@ -131,6 +172,13 @@ fn extract_stream_urls(data: &Value) -> Vec<String> {
     out
 }
 
+/// 原画优先，其次高清/标清（default_resolution 最优先）
+fn quality_order(default: &str) -> Vec<&str> {
+    let mut order = vec![default, "FULL_HD1", "HD1", "SD2", "SD1", "LD1", "LD2"];
+    order.dedup();
+    order
+}
+
 fn push_main_flv(parsed: &Value, out: &mut Vec<String>) {
     if let Some(u) = parsed.pointer("/data/origin/main/flv").and_then(Value::as_str) {
         push_unique(out, u);
@@ -157,7 +205,7 @@ fn collect_flv(node: &Value, out: &mut Vec<String>) {
 }
 
 fn push_unique(out: &mut Vec<String>, url: &str) {
-    if url.starts_with("http") && !out.iter().any(|u| u == url) {
+    if (url.starts_with("http://") || url.starts_with("https://")) && !out.iter().any(|u| u == url) {
         out.push(url.to_string());
     }
 }
@@ -210,5 +258,60 @@ mod tests {
     #[test]
     fn missing_stream_url_yields_empty() {
         assert!(extract_stream_urls(&json!({ "status": 2 })).is_empty());
+    }
+
+    #[test]
+    fn parses_flv_pull_url_map_with_default_resolution_first() {
+        let data = json!({
+            "status": 2,
+            "stream_url": {
+                "default_resolution": "FULL_HD1",
+                "flv_pull_url": {
+                    "SD1": "https://pull-flv.example.com/ld.flv",
+                    "FULL_HD1": "https://pull-flv.example.com/or4.flv",
+                    "HD1": "https://pull-flv.example.com/hd.flv"
+                }
+            }
+        });
+        let urls = extract_stream_urls(&data);
+        assert_eq!(urls[0], "https://pull-flv.example.com/or4.flv");
+        assert_eq!(urls.len(), 3);
+    }
+
+    #[test]
+    fn falls_back_to_hls_when_no_flv() {
+        let data = json!({
+            "status": 2,
+            "stream_url": {
+                "default_resolution": "FULL_HD1",
+                "hls_pull_url_map": {
+                    "FULL_HD1": "https://pull-hls.example.com/or4.m3u8",
+                    "SD1": "https://pull-hls.example.com/ld.m3u8"
+                }
+            }
+        });
+        let urls = extract_stream_urls(&data);
+        assert_eq!(urls[0], "https://pull-hls.example.com/or4.m3u8");
+    }
+
+    #[test]
+    fn accepts_reflow_shape() {
+        let resp = json!({ "status_code": 0, "data": { "room": {
+            "status": 2,
+            "stream_url": { "flv_pull_url": { "FULL_HD1": "https://pull-flv.example.com/reflow.flv" } }
+        }}});
+        let room = room_data(&resp).expect("应能取到 room");
+        let urls = extract_stream_urls(room);
+        assert_eq!(urls, vec!["https://pull-flv.example.com/reflow.flv".to_string()]);
+    }
+
+    #[test]
+    fn accepts_enter_shape() {
+        let resp = json!({ "status_code": 0, "data": { "data": [{
+            "status": 2,
+            "stream_url": { "flv_pull_url": { "FULL_HD1": "https://pull-flv.example.com/enter.flv" } }
+        }]}});
+        let room = room_data(&resp).expect("应能取到 room");
+        assert_eq!(extract_stream_urls(room).len(), 1);
     }
 }

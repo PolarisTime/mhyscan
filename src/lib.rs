@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod decode;
 pub mod douyin;
 pub mod flv;
+pub mod hls;
 pub mod mihoyo;
 pub mod qr;
 pub mod telemetry;
@@ -64,7 +65,166 @@ pub async fn resolve_stream(platform: &str, rid: &str) -> Result<Vec<String>> {
     }
 }
 
-/// 监视直播间：拉流 → 解码 → 识别 → 用账号库抢码
+/// 解码 → 识别 → 抢码的状态机；FLV 与 HLS 两条拉流路径共用
+struct ScanEngine<'a> {
+    platform: &'a str,
+    store: AccountStore,
+    client: MhyClient,
+    decoder: VideoDecoder,
+    telemetry: &'a Option<Telemetry>,
+    log: Logger<'a>,
+    start: Instant,
+    last_progress: Instant,
+    frames: u64,
+    attempts: u64,
+    bytes_read: u64,
+}
+
+impl<'a> ScanEngine<'a> {
+    async fn new(
+        platform: &'a str,
+        log: Logger<'a>,
+        telemetry: &'a Option<Telemetry>,
+    ) -> Result<Self> {
+        let store = AccountStore::load(AccountStore::default_path())?;
+        if store.account.is_empty() {
+            log("警告: 没有已登录账号，只能识别二维码无法抢码 (先运行 login)".into());
+        } else {
+            log(format!("已加载 {} 个账号用于抢码", store.account.len()));
+        }
+        let client = MhyClient::new(None);
+        log("  → 预热米哈游接口连接...".into());
+        client.warmup().await;
+
+        Ok(Self {
+            platform,
+            store,
+            client,
+            decoder: VideoDecoder::new()?,
+            telemetry,
+            log,
+            start: Instant::now(),
+            last_progress: Instant::now(),
+            frames: 0,
+            attempts: 0,
+            bytes_read: 0,
+        })
+    }
+
+    fn add_bytes(&mut self, n: u64) {
+        self.bytes_read = self.bytes_read.saturating_add(n);
+    }
+
+    async fn handle_units(&mut self, units: &[VideoUnit]) -> Result<Option<ScanOutcome>> {
+        for unit in units {
+            let Ok(Some((luma, w, h))) = self.decoder.feed(unit) else {
+                continue;
+            };
+            self.frames += 1;
+            if self.frames as usize % FRAME_SKIP != 0 {
+                continue;
+            }
+            self.attempts += 1;
+            let Some(text) = qr::detect_qr(luma, w, h) else {
+                continue;
+            };
+            if !qr::is_login_qr_url(&text) {
+                continue;
+            }
+            let elapsed = self.start.elapsed();
+            (self.log)(format!("\n识别到登录二维码! {text}"));
+            (self.log)(format!(
+                "  耗时 {:.1}s | 帧 {} | 识别 {}",
+                elapsed.as_secs_f64(),
+                self.frames,
+                self.attempts
+            ));
+
+            if self.store.account.is_empty() {
+                if let Some(t) = self.telemetry {
+                    t.record_scan_result(
+                        self.platform,
+                        false,
+                        self.attempts as u32,
+                        elapsed.as_millis() as u64,
+                    );
+                }
+                return Ok(Some(ScanOutcome::Detected {
+                    ticket: qr::extract_ticket(&text).unwrap_or_default(),
+                }));
+            }
+
+            // 单账号抢码：优先上次使用的账号，否则第一个
+            let acc = self
+                .store
+                .account
+                .get(self.store.last_account)
+                .or_else(|| self.store.account.first())
+                .expect("账号列表非空");
+            (self.log)(format!(
+                "  → 使用账号 {} (uid={}, {})",
+                acc.name, acc.uid, acc.type_
+            ));
+            let is_bili = acc.type_.contains("B服");
+            let res = if is_bili {
+                self.client
+                    .steal_qr_login_bili(&text, &acc.uid, &acc.access_key)
+                    .await
+            } else {
+                self.client
+                    .steal_qr_login(&text, &acc.access_key, &acc.mid)
+                    .await
+            };
+            let mut success_account = None;
+            match res {
+                Ok(true) => success_account = Some(acc.name.clone()),
+                Ok(false) => {}
+                Err(e) => (self.log)(format!("  → 账号 {} 出错: {e}", acc.name)),
+            }
+            if let Some(t) = self.telemetry {
+                t.record_scan_result(
+                    self.platform,
+                    success_account.is_some(),
+                    self.attempts as u32,
+                    elapsed.as_millis() as u64,
+                );
+            }
+            if let Some(account) = success_account {
+                return Ok(Some(ScanOutcome::Success {
+                    ticket: qr::extract_ticket(&text).unwrap_or_default(),
+                    account,
+                }));
+            }
+            (self.log)("  抢码失败，继续监视...".into());
+        }
+        Ok(None)
+    }
+
+    /// 每秒打一次进度行；超时返回 Some(Timeout)
+    fn tick(&mut self, timeout: Duration) -> Option<ScanOutcome> {
+        let now = Instant::now();
+        if now.duration_since(self.last_progress) < PROGRESS_INTERVAL {
+            return None;
+        }
+        let elapsed = now.duration_since(self.start);
+        let mib = self.bytes_read as f64 / 1024.0 / 1024.0;
+        (self.log)(format!(
+            "等待 {:.0}s · 流量 {mib:.1}MB · 帧 {} · 识别 {} · 内存 {:.0}MB",
+            elapsed.as_secs_f64(),
+            self.frames,
+            self.attempts,
+            rss_mb()
+        ));
+        self.last_progress = now;
+        if elapsed > timeout {
+            (self.log)("超时未识别到二维码".into());
+            return Some(ScanOutcome::Timeout);
+        }
+        None
+    }
+}
+
+/// 监视直播间：拉流 → 解码 → 识别 → 用账号库抢码（FLV 直连优先，HLS 回退）
 pub async fn run_scan(
     platform: &str,
     rid: &str,
@@ -76,26 +236,19 @@ pub async fn run_scan(
     let candidates = resolve_stream(platform, rid).await?;
     log(format!("[1/3] 获取到 {} 个直播流候选", candidates.len()));
 
-    let store = AccountStore::load(AccountStore::default_path())?;
-    if store.account.is_empty() {
-        log("警告: 没有已登录账号，只能识别二维码无法抢码 (先运行 login)".into());
-    } else {
-        log(format!("已加载 {} 个账号用于抢码", store.account.len()));
-    }
-    let client = MhyClient::new(None);
-    log("  → 预热米哈游接口连接...".into());
-    client.warmup().await; // 预热到米哈游接口的连接，降低抢码首包延迟
-
-    // 依次尝试候选（多 CDN 容灾）；HLS 暂不支持解码，跳过
+    let mut engine = ScanEngine::new(platform, log, telemetry).await?;
     let http = reqwest::Client::new();
+    let (ua, referer) = stream_request_headers(platform);
+
+    // 1) FLV 直连优先（低延迟）
     let mut opened = None;
+    let mut hls_url = None;
     for url in &candidates {
         if url.contains(".m3u8") {
-            log("  → 跳过 HLS(m3u8) 候选：当前仅支持 HTTP-FLV".into());
+            hls_url.get_or_insert_with(|| url.clone());
             continue;
         }
         log(format!("  → 尝试: {}...", &url[..url.len().min(88)]));
-        let (ua, referer) = stream_request_headers(platform);
         match http
             .get(url)
             .header("User-Agent", ua)
@@ -114,141 +267,63 @@ pub async fn run_scan(
             )),
         }
     }
-    let resp = opened
-        .ok_or_else(|| anyhow::anyhow!("没有可用直播流（HLS 暂不支持，或候选全部打开失败）"))?;
-    log("[2/3] 直播流已连接".into());
-    log("[3/3] 开始识别二维码...".into());
 
-    let mut stream = resp.bytes_stream();
-    let mut buf = BytesMut::with_capacity(1 << 20);
-    let mut parser = FlvParser::new();
-    let mut decoder = VideoDecoder::new()?;
-    let mut units = Vec::new();
+    if let Some(resp) = opened {
+        log("[2/3] 直播流已连接".into());
+        log("[3/3] 开始识别二维码...".into());
 
-    let start = Instant::now();
-    let mut last_progress = Instant::now();
-    let mut bytes_read: u64 = 0;
-    let mut frames: u64 = 0;
-    let mut attempts: u64 = 0;
-    let mut got_config = false;
-    let mut result = ScanOutcome::Timeout;
+        let mut stream = resp.bytes_stream();
+        let mut buf = BytesMut::with_capacity(1 << 20);
+        let mut parser = FlvParser::new();
+        let mut units = Vec::new();
 
-    'outer: while let Some(chunk) = stream.next().await {
-        if stop.load(Ordering::Relaxed) {
-            log("已停止".into());
-            result = ScanOutcome::Stopped;
-            break;
+        while let Some(chunk) = stream.next().await {
+            if stop.load(Ordering::Relaxed) {
+                log("已停止".into());
+                return Ok(ScanOutcome::Stopped);
+            }
+            let chunk = chunk.context("读取直播流失败")?;
+            engine.add_bytes(chunk.len() as u64);
+            buf.extend_from_slice(&chunk);
+            units.clear();
+            parser.push(&mut buf, &mut units)?;
+            if let Some(outcome) = engine.handle_units(&units).await? {
+                return Ok(outcome);
+            }
+            if let Some(outcome) = engine.tick(timeout) {
+                return Ok(outcome);
+            }
         }
-        let chunk = chunk.context("读取直播流失败")?;
-        bytes_read += chunk.len() as u64;
-        buf.extend_from_slice(&chunk);
+        return Ok(ScanOutcome::Timeout);
+    }
 
-        units.clear();
-        parser.push(&mut buf, &mut units)?;
+    // 2) HLS(TS) 回退
+    if let Some(url) = hls_url {
+        log(format!("  → 使用 HLS 拉流: {}...", &url[..url.len().min(88)]));
+        log("[2/3] 直播流已连接 (HLS)".into());
+        log("[3/3] 开始识别二维码...".into());
 
-        for unit in &units {
-            if let VideoUnit::Config(_) = unit {
-                got_config = true;
+        let mut session = crate::hls::HlsSession::new(&url, ua, referer);
+        let mut last_bytes = 0u64;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                log("已停止".into());
+                return Ok(ScanOutcome::Stopped);
             }
-            let Ok(Some((luma, w, h))) = decoder.feed(unit) else {
-                continue;
-            };
-            frames += 1;
-            if frames as usize % FRAME_SKIP != 0 {
-                continue;
+            let units = session.next_units().await?;
+            let total = session.bytes_read();
+            engine.add_bytes(total.saturating_sub(last_bytes));
+            last_bytes = total;
+            if let Some(outcome) = engine.handle_units(&units).await? {
+                return Ok(outcome);
             }
-            attempts += 1;
-            let Some(text) = qr::detect_qr(luma, w, h) else {
-                continue;
-            };
-            if !qr::is_login_qr_url(&text) {
-                continue;
-            }
-            let elapsed = start.elapsed();
-            log(format!("\n识别到登录二维码! {text}"));
-            log(format!(
-                "  耗时 {:.1}s | 帧 {frames} | 识别 {attempts}",
-                elapsed.as_secs_f64()
-            ));
-
-            if store.account.is_empty() {
-                if let Some(t) = telemetry {
-                    t.record_scan_result(
-                        platform,
-                        false,
-                        attempts as u32,
-                        elapsed.as_millis() as u64,
-                    );
-                }
-                result = ScanOutcome::Detected {
-                    ticket: qr::extract_ticket(&text).unwrap_or_default(),
-                };
-                break 'outer;
-            }
-
-            // 单账号抢码：优先上次使用的账号，否则第一个
-            let acc = store
-                .account
-                .get(store.last_account)
-                .or_else(|| store.account.first())
-                .expect("账号列表非空");
-            log(format!(
-                "  → 使用账号 {} (uid={}, {})",
-                acc.name, acc.uid, acc.type_
-            ));
-            let is_bili = acc.type_.contains("B服");
-            let res = if is_bili {
-                client
-                    .steal_qr_login_bili(&text, &acc.uid, &acc.access_key)
-                    .await
-            } else {
-                client
-                    .steal_qr_login(&text, &acc.access_key, &acc.mid)
-                    .await
-            };
-            let mut success_account = None;
-            match res {
-                Ok(true) => success_account = Some(acc.name.clone()),
-                Ok(false) => {}
-                Err(e) => log(format!("  → 账号 {} 出错: {e}", acc.name)),
-            }
-            if let Some(t) = telemetry {
-                t.record_scan_result(
-                    platform,
-                    success_account.is_some(),
-                    attempts as u32,
-                    elapsed.as_millis() as u64,
-                );
-            }
-            if let Some(account) = success_account {
-                result = ScanOutcome::Success {
-                    ticket: qr::extract_ticket(&text).unwrap_or_default(),
-                    account,
-                };
-                break 'outer;
-            }
-            log("  抢码失败，继续监视...".into());
-        }
-
-        let now = Instant::now();
-        if now.duration_since(last_progress) >= PROGRESS_INTERVAL {
-            let elapsed = now.duration_since(start);
-            let mib = bytes_read as f64 / 1024.0 / 1024.0;
-            log(format!(
-                "等待 {:.0}s · 流量 {mib:.1}MB · 帧 {frames} · 识别 {attempts} · 内存 {:.0}MB",
-                elapsed.as_secs_f64(),
-                rss_mb()
-            ));
-            last_progress = now;
-            if elapsed > timeout {
-                log("超时未识别到二维码".into());
-                result = ScanOutcome::Timeout;
-                break;
+            if let Some(outcome) = engine.tick(timeout) {
+                return Ok(outcome);
             }
         }
     }
 
-    Ok(result)
+    anyhow::bail!("没有可用直播流（FLV/HLS 候选全部打开失败）")
 }
 
 pub fn rss_mb() -> f64 {

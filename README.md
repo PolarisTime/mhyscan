@@ -20,11 +20,11 @@
 
 ## 功能
 
-- HTTP-FLV 低延迟拉流（FLV + AVC + 原画，多 CDN 候选容灾）
+- HTTP-FLV 低延迟拉流（FLV + AVC + 原画，多 CDN 候选容灾），FLV 不可用时回退 HLS(TS)
 - 二维码识别（rxing / ZXing）
 - 官服扫码登录 + 抢码（passport `scan/confirm`）
 - B站扫码登录（保存拉流凭证 cookie）
-- 抖音直播流
+- 抖音直播流（原画优先，多 CDN；HLS 回退；Cookie 可用 `MHYSCAN_DOUYIN_COOKIE` 或 `Config/douyin_cookie.txt` 覆盖）
 - 多账号/单账号抢码、连接预热
 - 匿名遥测（可关闭，自建 Cloudflare Worker + D1）
 - 可选 Tauri 桌面端（`tauri-app/`，HTML 设计稿）
