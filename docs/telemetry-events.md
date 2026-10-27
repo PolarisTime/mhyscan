@@ -25,16 +25,18 @@
 | `app_start` | `ui_mode` | string | `cli` / `gui` |
 | | `os` | string | `linux` / `windows` / `macos` |
 | | `arch` | string | `x86_64` / `aarch64` |
-| | `channel` | string | `exe` / `pip` / `source` |
+| | `channel` | string | `exe` / `source` |
 | `scan_result` | `platform` | string | `bili` / `douyin` |
 | | `success` | bool | 是否抢码成功（失败时记此事件） |
 | | `attempt_count` | int | 本次识别尝试次数 |
 | | `detect_latency_ms` | int | 从启动到识别耗时(ms) |
 | `scan_success` | `platform` | string | `bili` / `douyin` |
-| | `rid` | string | 直播间号（公开数据） |
-| | `uid_hash` | string | 游戏 UID 的服务端/客户端 HMAC（可空） |
-| | `game_biz` / `region` | string | 如 `hk4e_cn` / `cn_gf01` |
-| | `attempt_count` / `detect_latency_ms` | int | 同上 |
+| | `success` | bool | 恒为 `true`（失败走 `scan_result`） |
+| | `attempt_count` | int | 本次识别尝试次数 |
+| | `detect_latency_ms` | int | 从启动到识别耗时(ms) |
+
+> 说明：`rid` / `uid_hash` / `game_biz` / `region` **当前不采集**（隐私优先，仅保留平台与耗时）。
+> 服务端 `scan_success` 表只为 `scan_success` 事件写入，`scan_result`（失败）只进 `events` 表。
 | `error` | `exc_type` | string | 异常类型名（**不含堆栈明文**） |
 
 ## 服务端表
@@ -44,6 +46,7 @@
 | `events` | 原始事件（含 `props`、`ip_prefix`） | 90 天（Cron 清理） |
 | `scan_success` | 抢码成功/尝试记录（便于聚合） | 长期 |
 | `daily_stats` | 按天 × 事件聚合（`installs`,`total`） | 长期 |
+| `/stats` | 聚合概览接口；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
 
 ## 隐私约束（禁止上报）
 

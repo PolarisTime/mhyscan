@@ -19,6 +19,8 @@ interface Env {
   TELEMETRY_KEY: string;
   RETENTION_DAYS: string;
   CLOCK_SKEW: string;
+  /// 可选：设置后 /stats 需要 ?token= 或 Authorization: Bearer
+  STATS_TOKEN?: string;
 }
 
 interface TelemetryEvent {
@@ -40,6 +42,11 @@ export default {
       return json({ ok: true, service: "mhyscan-telemetry" });
     }
     if (request.method === "GET" && url.pathname === "/stats") {
+      if (env.STATS_TOKEN) {
+        const bearer = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
+        const token = url.searchParams.get("token") || bearer || "";
+        if (token !== env.STATS_TOKEN) return json({ error: "unauthorized" }, 401);
+      }
       return stats(env);
     }
     if (request.method === "POST" && url.pathname === "/collect") {
@@ -147,7 +154,8 @@ async function collect(request: Request, env: Env): Promise<Response> {
         )
       );
 
-      if (ev.event === "scan_success" || ev.event === "scan_result") {
+      // 只有 scan_success 才进成功表；scan_result 是失败/尝试，仅留在 events
+      if (ev.event === "scan_success") {
         const p = (ev.props ?? {}) as Record<string, unknown>;
         stmts.push(
           env.DB.prepare(

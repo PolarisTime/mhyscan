@@ -74,11 +74,12 @@ mhyscan scan 6 --timeout 600
 | `MHYSCAN_TELEMETRY_AUTH` / `_KEY` | HMAC / AES 密钥 | — |
 | `MHYSCAN_TELEMETRY_INTERVAL` | 定时上报间隔(s) | `300` |
 | `MHYSCAN_TELEMETRY=0` / `DO_NOT_TRACK=1` | 关闭遥测 | — |
+| `MHYSCAN_CONFIG_DIR` | 配置目录（install_id / spool 存放位置） | 平台标准目录 |
 | `MHYSCAN_DEBUG` | 调试日志 | 关 |
 
 ## 遥测后端（自建）
 
-`server/` 为 Cloudflare Worker + D1：`/collect` 接收（HMAC + AES-256-GCM + gzip）、每日 Cron 聚合与 90 天清理。见 `docs/telemetry-events.md`。
+`server/` 为 Cloudflare Worker + D1：`/collect` 接收（HMAC + AES-256-GCM + gzip）、每日 Cron 聚合与 90 天清理；`/stats` 可选 `STATS_TOKEN` 鉴权。CLI 与 GUI 都会在启动/定时/退出时上报（GUI 需带遥测环境变量启动）。见 `docs/telemetry-events.md`。
 
 部署：
 ```bash

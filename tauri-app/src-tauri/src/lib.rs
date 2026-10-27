@@ -9,9 +9,18 @@ use mhyscan_rs::{ScanOutcome, run_scan};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
-#[derive(Default)]
 struct AppState {
     scanning: Mutex<Option<Arc<AtomicBool>>>,
+    telemetry: Option<Telemetry>,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self {
+            scanning: Mutex::new(None),
+            telemetry: Telemetry::from_env(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -185,7 +194,7 @@ async fn scan(
     let stop = Arc::new(AtomicBool::new(false));
     *state.scanning.lock().unwrap() = Some(stop.clone());
 
-    let telemetry = Telemetry::from_env();
+    let telemetry = state.telemetry.clone();
     let app_for_log = app.clone();
     let log = move |s: String| {
         let _ = app_for_log.emit("scan-log", s);
@@ -224,7 +233,20 @@ fn stop_scan(state: State<'_, AppState>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState::default())
+        .manage(AppState::new())
+        .setup(|app| {
+            use tauri::Manager;
+            // 启动：补发 spool → 记录 app_start → 定时上报 + 立即上报一次
+            if let Some(t) = app.state::<AppState>().telemetry.clone() {
+                t.load_spool();
+                t.record_env("gui");
+                t.start_auto_flush();
+                tauri::async_runtime::spawn(async move {
+                    let _ = t.flush().await;
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             bili_status,
@@ -236,6 +258,20 @@ pub fn run() {
             scan,
             stop_scan
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                use tauri::Manager;
+                if let Some(t) = app.state::<AppState>().telemetry.clone() {
+                    // 退出前尽力上报；失败的落盘，下次启动补发
+                    let handle = std::thread::spawn(move || {
+                        tauri::async_runtime::block_on(async move {
+                            t.flush_or_spool().await;
+                        });
+                    });
+                    let _ = handle.join();
+                }
+            }
+        });
 }

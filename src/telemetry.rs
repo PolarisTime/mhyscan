@@ -16,6 +16,8 @@ use crate::crypto::now_secs;
 
 const SCHEMA_VERSION: u32 = 1;
 const MAX_QUEUE: usize = 512;
+/// 单次上报批量上限（服务端限制 256，留余量）
+const MAX_BATCH: usize = 200;
 const MAX_SPOOL: usize = 2048;
 
 /// 匿名遥测客户端（自建 API，批量上报）
@@ -44,6 +46,8 @@ struct Inner {
     install_id: String,
     session_id: String,
     queue: Mutex<Vec<Value>>,
+    /// 串行化 flush，避免启动/退出/定时并发重复上报
+    flush_lock: tokio::sync::Mutex<()>,
 }
 
 impl Telemetry {
@@ -78,6 +82,7 @@ impl Telemetry {
                 install_id: load_or_create_install_id(),
                 session_id: random_hex(16),
                 queue: Mutex::new(Vec::new()),
+                flush_lock: tokio::sync::Mutex::new(()),
             }),
             interval: Duration::from_secs(interval),
         })
@@ -141,36 +146,50 @@ impl Telemetry {
     /// 若中途失败或被取消，事件仍留在队列，稍后/退出时重发（服务端按
     /// `event_id` 去重，故重复发送无副作用）。
     pub async fn flush(&self) -> anyhow::Result<()> {
-        let snapshot = {
-            let q = self.inner.queue.lock().unwrap();
-            if q.is_empty() {
+        let _guard = self.inner.flush_lock.lock().await;
+        loop {
+            let snapshot: Vec<Value> = {
+                let q = self.inner.queue.lock().unwrap();
+                if q.is_empty() {
+                    return Ok(());
+                }
+                q.iter().take(MAX_BATCH).cloned().collect()
+            };
+            let count = snapshot.len();
+            send(
+                &self.inner.http,
+                &self.inner.url,
+                self.inner.auth.as_deref(),
+                self.inner.enc_key.as_deref(),
+                Value::Array(snapshot.clone()),
+            )
+            .await?;
+
+            let sent: HashSet<String> = snapshot
+                .iter()
+                .filter_map(|e| {
+                    e.get("event_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect();
+            let removed = {
+                let mut q = self.inner.queue.lock().unwrap();
+                let before = q.len();
+                q.retain(|e| match e.get("event_id").and_then(Value::as_str) {
+                    Some(id) => !sent.contains(id),
+                    None => true,
+                });
+                before - q.len()
+            };
+            // 防御：整批都没被移除时避免死循环
+            if removed == 0 {
+                anyhow::bail!("批量事件去重失败（缺少 event_id）");
+            }
+            if count < MAX_BATCH {
                 return Ok(());
             }
-            q.clone()
-        };
-        send(
-            &self.inner.http,
-            &self.inner.url,
-            self.inner.auth.as_deref(),
-            self.inner.enc_key.as_deref(),
-            Value::Array(snapshot.clone()),
-        )
-        .await?;
-
-        let sent: HashSet<String> = snapshot
-            .iter()
-            .filter_map(|e| {
-                e.get("event_id")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-            })
-            .collect();
-        let mut q = self.inner.queue.lock().unwrap();
-        q.retain(|e| match e.get("event_id").and_then(Value::as_str) {
-            Some(id) => !sent.contains(id),
-            None => true,
-        });
-        Ok(())
+        }
     }
 
     /// 退出时使用：尽力上报，失败的落盘 spool 等下次启动补发
@@ -182,6 +201,10 @@ impl Telemetry {
 
     /// 把当前队列剩余事件追加到 spool 文件（有界）
     pub fn spool_remaining(&self) {
+        self.spool_remaining_to(&spool_path());
+    }
+
+    fn spool_remaining_to(&self, path: &std::path::Path) {
         let events = {
             let mut q = self.inner.queue.lock().unwrap();
             std::mem::take(&mut *q)
@@ -189,7 +212,6 @@ impl Telemetry {
         if events.is_empty() {
             return;
         }
-        let path = spool_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -205,14 +227,17 @@ impl Telemetry {
             let excess = lines.len() - MAX_SPOOL;
             lines.drain(0..excess);
         }
-        let _ = std::fs::write(&path, lines.join("\n"));
+        let _ = std::fs::write(path, lines.join("\n"));
         debug(&format!("已 spool {} 条待补发事件", events.len()));
     }
 
     /// 启动时调用：读取 spool 并重新入队，然后清空文件
     pub fn load_spool(&self) {
-        let path = spool_path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        self.load_spool_from(&spool_path());
+    }
+
+    fn load_spool_from(&self, path: &std::path::Path) {
+        let Ok(text) = std::fs::read_to_string(path) else {
             return;
         };
         let events: Vec<Value> = text
@@ -229,7 +254,7 @@ impl Telemetry {
                 q.drain(0..excess);
             }
         }
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path);
     }
 
     fn envelope(&self, event: &str, props: Value) -> Value {
@@ -309,13 +334,39 @@ async fn send(
 fn spool_path() -> PathBuf {
     std::env::var("MHYSCAN_TELEMETRY_SPOOL")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("Config/telemetry_spool.jsonl"))
+        .unwrap_or_else(|_| config_dir().join("telemetry_spool.jsonl"))
 }
 
 fn telemetry_path() -> PathBuf {
     std::env::var("MHYSCAN_TELEMETRY_FILE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("Config/telemetry.json"))
+        .unwrap_or_else(|_| config_dir().join("telemetry.json"))
+}
+
+/// 配置目录：`MHYSCAN_CONFIG_DIR` > 平台标准目录 > 当前目录下的 `Config`
+fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("MHYSCAN_CONFIG_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    if cfg!(target_os = "windows") {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("mhyscan");
+        }
+    } else if cfg!(target_os = "macos") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join("Library/Application Support/mhyscan");
+        }
+    } else {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("mhyscan");
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(".config/mhyscan");
+        }
+    }
+    PathBuf::from("Config")
 }
 
 fn load_or_create_install_id() -> String {
@@ -367,5 +418,92 @@ fn channel() -> &'static str {
 fn debug(msg: &str) {
     if std::env::var("MHYSCAN_DEBUG").is_ok() {
         eprintln!("[telemetry] {msg}");
+    }
+}
+
+#[cfg(test)]
+impl Telemetry {
+    fn for_test() -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(50))
+            .build()
+            .unwrap();
+        Self {
+            inner: Arc::new(Inner {
+                http,
+                url: "http://127.0.0.1:9/collect".to_string(),
+                auth: None,
+                enc_key: None,
+                install_id: "test-install".to_string(),
+                session_id: "test-session".to_string(),
+                queue: Mutex::new(Vec::new()),
+                flush_lock: tokio::sync::Mutex::new(()),
+            }),
+            interval: Duration::from_secs(10),
+        }
+    }
+
+    fn queue_len(&self) -> usize {
+        self.inner.queue.lock().unwrap().len()
+    }
+
+    fn snapshot(&self) -> Vec<Value> {
+        self.inner.queue.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn envelope_has_required_fields_and_no_pii() {
+        let t = Telemetry::for_test();
+        t.record_scan_result("bili", true, 12, 3456);
+        let env = t.snapshot().pop().expect("event");
+        assert_eq!(env["event"], "scan_success");
+        assert_eq!(env["props"]["platform"], "bili");
+        assert!(env["event_id"].as_str().is_some_and(|s| s.len() == 36));
+        assert_eq!(env["install_id"], "test-install");
+        assert_eq!(env["schema_version"], 1);
+        // 隐私：不得出现敏感字段名/值
+        let text = env.to_string();
+        for forbidden in ["ticket", "stoken", "cookie", "qrcode", "access_key"] {
+            assert!(!text.contains(forbidden), "信封不应包含 {forbidden}: {text}");
+        }
+    }
+
+    #[test]
+    fn queue_is_bounded() {
+        let t = Telemetry::for_test();
+        for i in 0..600 {
+            t.record("test_event", json!({ "i": i }));
+        }
+        assert_eq!(t.queue_len(), MAX_QUEUE);
+    }
+
+    #[test]
+    fn spool_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("mhyscan-telemetry-{}", fastrand::u64(..)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("spool.jsonl");
+
+        let t = Telemetry::for_test();
+        t.record("a", json!({}));
+        t.record("b", json!({}));
+        t.spool_remaining_to(&path);
+        assert_eq!(t.queue_len(), 0, "spool 后队列应清空");
+
+        t.load_spool_from(&path);
+        assert_eq!(t.queue_len(), 2, "补发应恢复两条事件");
+        assert!(!path.exists(), "读取后应删除 spool 文件");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn batch_limit_within_server_capacity() {
+        // 服务端拒绝 >256 条/批，客户端必须留余量
+        assert!(MAX_BATCH > 0 && MAX_BATCH <= 256);
     }
 }
