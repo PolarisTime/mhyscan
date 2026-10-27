@@ -116,6 +116,87 @@ impl<'a> ScanEngine<'a> {
         self.bytes_read = self.bytes_read.saturating_add(n);
     }
 
+    async fn handle_frame(
+        &mut self,
+        luma: Vec<u8>,
+        w: u32,
+        h: u32,
+    ) -> Result<Option<ScanOutcome>> {
+        self.attempts += 1;
+        let Some(text) = qr::detect_qr(luma, w, h) else {
+            return Ok(None);
+        };
+        if !qr::is_login_qr_url(&text) {
+            return Ok(None);
+        }
+        let elapsed = self.start.elapsed();
+        (self.log)(format!("\n识别到登录二维码! {text}"));
+        (self.log)(format!(
+            "  耗时 {:.1}s | 帧 {} | 识别 {}",
+            elapsed.as_secs_f64(),
+            self.frames,
+            self.attempts
+        ));
+
+        if self.store.account.is_empty() {
+            if let Some(t) = self.telemetry {
+                t.record_scan_result(
+                    self.platform,
+                    false,
+                    self.attempts as u32,
+                    elapsed.as_millis() as u64,
+                );
+            }
+            return Ok(Some(ScanOutcome::Detected {
+                ticket: qr::extract_ticket(&text).unwrap_or_default(),
+            }));
+        }
+
+        // 单账号抢码：优先上次使用的账号，否则第一个
+        let acc = self
+            .store
+            .account
+            .get(self.store.last_account)
+            .or_else(|| self.store.account.first())
+            .expect("账号列表非空");
+        (self.log)(format!(
+            "  → 使用账号 {} (uid={}, {})",
+            acc.name, acc.uid, acc.type_
+        ));
+        let is_bili = acc.type_.contains("B服");
+        let res = if is_bili {
+            self.client
+                .steal_qr_login_bili(&text, &acc.uid, &acc.access_key)
+                .await
+        } else {
+            self.client
+                .steal_qr_login(&text, &acc.access_key, &acc.mid)
+                .await
+        };
+        let mut success_account = None;
+        match res {
+            Ok(true) => success_account = Some(acc.name.clone()),
+            Ok(false) => {}
+            Err(e) => (self.log)(format!("  → 账号 {} 出错: {e}", acc.name)),
+        }
+        if let Some(t) = self.telemetry {
+            t.record_scan_result(
+                self.platform,
+                success_account.is_some(),
+                self.attempts as u32,
+                elapsed.as_millis() as u64,
+            );
+        }
+        if let Some(account) = success_account {
+            return Ok(Some(ScanOutcome::Success {
+                ticket: qr::extract_ticket(&text).unwrap_or_default(),
+                account,
+            }));
+        }
+        (self.log)("  抢码失败，继续监视...".into());
+        Ok(None)
+    }
+
     async fn handle_units(&mut self, units: &[VideoUnit]) -> Result<Option<ScanOutcome>> {
         for unit in units {
             let Ok(Some((luma, w, h))) = self.decoder.feed(unit) else {
@@ -125,87 +206,32 @@ impl<'a> ScanEngine<'a> {
             if self.frames as usize % FRAME_SKIP != 0 {
                 continue;
             }
-            self.attempts += 1;
-            let Some(text) = qr::detect_qr(luma, w, h) else {
-                continue;
-            };
-            if !qr::is_login_qr_url(&text) {
-                continue;
+            if let Some(outcome) = self.handle_frame(luma, w, h).await? {
+                return Ok(Some(outcome));
             }
-            let elapsed = self.start.elapsed();
-            (self.log)(format!("\n识别到登录二维码! {text}"));
-            (self.log)(format!(
-                "  耗时 {:.1}s | 帧 {} | 识别 {}",
-                elapsed.as_secs_f64(),
-                self.frames,
-                self.attempts
-            ));
-
-            if self.store.account.is_empty() {
-                if let Some(t) = self.telemetry {
-                    t.record_scan_result(
-                        self.platform,
-                        false,
-                        self.attempts as u32,
-                        elapsed.as_millis() as u64,
-                    );
-                }
-                return Ok(Some(ScanOutcome::Detected {
-                    ticket: qr::extract_ticket(&text).unwrap_or_default(),
-                }));
-            }
-
-            // 单账号抢码：优先上次使用的账号，否则第一个
-            let acc = self
-                .store
-                .account
-                .get(self.store.last_account)
-                .or_else(|| self.store.account.first())
-                .expect("账号列表非空");
-            (self.log)(format!(
-                "  → 使用账号 {} (uid={}, {})",
-                acc.name, acc.uid, acc.type_
-            ));
-            let is_bili = acc.type_.contains("B服");
-            let res = if is_bili {
-                self.client
-                    .steal_qr_login_bili(&text, &acc.uid, &acc.access_key)
-                    .await
-            } else {
-                self.client
-                    .steal_qr_login(&text, &acc.access_key, &acc.mid)
-                    .await
-            };
-            let mut success_account = None;
-            match res {
-                Ok(true) => success_account = Some(acc.name.clone()),
-                Ok(false) => {}
-                Err(e) => (self.log)(format!("  → 账号 {} 出错: {e}", acc.name)),
-            }
-            if let Some(t) = self.telemetry {
-                t.record_scan_result(
-                    self.platform,
-                    success_account.is_some(),
-                    self.attempts as u32,
-                    elapsed.as_millis() as u64,
-                );
-            }
-            if let Some(account) = success_account {
-                return Ok(Some(ScanOutcome::Success {
-                    ticket: qr::extract_ticket(&text).unwrap_or_default(),
-                    account,
-                }));
-            }
-            (self.log)("  抢码失败，继续监视...".into());
         }
         Ok(None)
     }
 
-    /// 每秒打一次进度行；超时返回 Some(Timeout)
-    fn tick(&mut self, timeout: Duration) -> Option<ScanOutcome> {
+    /// 流结束/停止时吐出解码器重排缓冲里的残留帧（B 帧场景）
+    async fn flush_pending(&mut self) -> Result<Option<ScanOutcome>> {
+        for (luma, w, h) in self.decoder.flush() {
+            self.frames += 1;
+            if self.frames as usize % FRAME_SKIP != 0 {
+                continue;
+            }
+            if let Some(outcome) = self.handle_frame(luma, w, h).await? {
+                return Ok(Some(outcome));
+            }
+        }
+        Ok(None)
+    }
+
+    /// 每秒打一次进度行；超时返回 Some(Timeout)（返回前会先 flush 残留帧）
+    async fn tick(&mut self, timeout: Duration) -> Result<Option<ScanOutcome>> {
         let now = Instant::now();
         if now.duration_since(self.last_progress) < PROGRESS_INTERVAL {
-            return None;
+            return Ok(None);
         }
         let elapsed = now.duration_since(self.start);
         let mib = self.bytes_read as f64 / 1024.0 / 1024.0;
@@ -218,10 +244,13 @@ impl<'a> ScanEngine<'a> {
         ));
         self.last_progress = now;
         if elapsed > timeout {
+            if let Some(outcome) = self.flush_pending().await? {
+                return Ok(Some(outcome));
+            }
             (self.log)("超时未识别到二维码".into());
-            return Some(ScanOutcome::Timeout);
+            return Ok(Some(ScanOutcome::Timeout));
         }
-        None
+        Ok(None)
     }
 }
 
@@ -280,6 +309,9 @@ pub async fn run_scan(
 
         while let Some(chunk) = stream.next().await {
             if stop.load(Ordering::Relaxed) {
+                if let Some(outcome) = engine.flush_pending().await? {
+                    return Ok(outcome);
+                }
                 log("已停止".into());
                 return Ok(ScanOutcome::Stopped);
             }
@@ -291,7 +323,7 @@ pub async fn run_scan(
             if let Some(outcome) = engine.handle_units(&units).await? {
                 return Ok(outcome);
             }
-            if let Some(outcome) = engine.tick(timeout) {
+            if let Some(outcome) = engine.tick(timeout).await? {
                 return Ok(outcome);
             }
         }
@@ -308,6 +340,9 @@ pub async fn run_scan(
         let mut last_bytes = 0u64;
         loop {
             if stop.load(Ordering::Relaxed) {
+                if let Some(outcome) = engine.flush_pending().await? {
+                    return Ok(outcome);
+                }
                 log("已停止".into());
                 return Ok(ScanOutcome::Stopped);
             }
@@ -318,7 +353,7 @@ pub async fn run_scan(
             if let Some(outcome) = engine.handle_units(&units).await? {
                 return Ok(outcome);
             }
-            if let Some(outcome) = engine.tick(timeout) {
+            if let Some(outcome) = engine.tick(timeout).await? {
                 return Ok(outcome);
             }
         }
