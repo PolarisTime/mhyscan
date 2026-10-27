@@ -50,9 +50,13 @@ pub async fn get_candidates(room_id: &str) -> Result<Vec<String>> {
     let params = format!(
         "aid=6383&app_name=douyin_web&live_id=1&device_platform=web&\
          browser_language=zh-CN&browser_platform=Win32&browser_name=Edge&\
-         browser_version=139.0.0.0&is_need_double_stream=false&web_rid={room_id}"
+         browser_version=139.0.0.0&is_need_double_stream=false&web_rid={room_id}&cookie_enabled=true"
     );
-    let url = format!("https://live.douyin.com/webcast/room/web/enter/?{params}");
+    // 抖音 web 接口需要 a_bogus 签名（未签名时返回 200 空 body）
+    let fp = crate::douyin_abogus::BrowserFingerprintGenerator::generate_fingerprint("Edge");
+    let mut signer = crate::douyin_abogus::ABogus::new(Some(&fp), Some(UA), None);
+    let (signed_params, _a_bogus, _ua, _body) = signer.generate_abogus(&params, "");
+    let url = format!("https://live.douyin.com/webcast/room/web/enter/?{signed_params}");
     let resp: Value = client
         .get(&url)
         .header("User-Agent", UA)

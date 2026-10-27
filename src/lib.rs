@@ -9,6 +9,7 @@ pub mod bili_sdk_v3;
 pub mod crypto;
 pub mod decode;
 pub mod douyin;
+pub mod douyin_abogus;
 pub mod flv;
 pub mod hls;
 pub mod mihoyo;
