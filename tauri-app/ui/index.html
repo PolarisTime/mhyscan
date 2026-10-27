@@ -482,8 +482,8 @@
         </div>
         <div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">
-            <span class="hint">房间号 RID</span>
-            <span class="hint" style="font-size:9.5px">支持短号 / 长号</span>
+            <span class="hint" id="rid-label">房间号 RID</span>
+            <span class="hint" id="rid-hint" style="font-size:9.5px">支持短号 / 长号</span>
           </div>
           <div class="field">
             <input class="input" id="rid-input" value="6" placeholder="输入 B 站直播间号" spellcheck="false" autocomplete="off" />
@@ -650,6 +650,7 @@ const PLATFORM_LABEL = { bili: "哔哩哔哩", douyin: "抖音" };
 const state = {
   platform: "bili",
   rid: "6",
+  rids: { bili: "6", douyin: "" },
   accounts: [],
   logs: [],
   logFilter: "ALL",
@@ -1227,14 +1228,20 @@ function stopDemoScan() {
    绑定
    ============================================================ */
 function switchPlatform(p) {
+  if (p === state.platform) return;
+  // 记住当前平台的输入，切回时恢复
+  state.rids[state.platform] = $("rid-input").value.trim();
   state.platform = p;
+  $("rid-input").value = state.rids[p] || "";
   document.querySelectorAll("#platform-seg button").forEach((b) => {
     const on = b.dataset.platform === p;
     b.classList.toggle("on", on);
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
   $("platform-badge").textContent = p === "bili" ? "B站" : "抖音";
-  $("rid-input").placeholder = p === "bili" ? "输入 B 站直播间号" : "输入抖音直播间号";
+  $("rid-input").placeholder = p === "bili" ? "输入 B 站直播间号" : "输入抖音 web_rid";
+  $("rid-label").textContent = p === "bili" ? "房间号 RID" : "web_rid";
+  $("rid-hint").textContent = p === "bili" ? "支持短号 / 长号" : "填 live.douyin.com/ 后的号";
 }
 
 function copyText(text) {

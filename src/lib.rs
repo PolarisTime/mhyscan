@@ -29,6 +29,15 @@ use crate::telemetry::Telemetry;
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const BILI_REFERER: &str = "https://live.bilibili.com";
+
+/// 拉流请求头按平台区分：抖音 CDN 校验 douyin UA/Referer，带 B站 Referer 会被 403
+fn stream_request_headers(platform: &str) -> (&'static str, &'static str) {
+    match platform {
+        "douyin" | "dy" => (douyin::UA, douyin::REFERER),
+        _ => (UA, BILI_REFERER),
+    }
+}
 const FRAME_SKIP: usize = 3;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -50,7 +59,7 @@ pub enum ScanOutcome {
 pub async fn resolve_stream(platform: &str, rid: &str) -> Result<Vec<String>> {
     match platform {
         "bili" | "bilibili" => bili::get_candidates(rid).await,
-        "douyin" | "dy" => Ok(vec![douyin::get_flv_url(rid).await?]),
+        "douyin" | "dy" => douyin::get_candidates(rid).await,
         other => anyhow::bail!("不支持的平台: {other}"),
     }
 }
@@ -86,10 +95,11 @@ pub async fn run_scan(
             continue;
         }
         log(format!("  → 尝试: {}...", &url[..url.len().min(88)]));
+        let (ua, referer) = stream_request_headers(platform);
         match http
             .get(url)
-            .header("User-Agent", UA)
-            .header("Referer", "https://live.bilibili.com")
+            .header("User-Agent", ua)
+            .header("Referer", referer)
             .send()
             .await
         {
@@ -307,4 +317,25 @@ pub fn detect_qr_file(path: &str) -> Result<String> {
     let result = rxing::helpers::detect_in_file(path, Some(rxing::BarcodeFormat::QR_CODE))
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(result.getText().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn douyin_uses_douyin_headers() {
+        let (ua, referer) = stream_request_headers("douyin");
+        assert_eq!(referer, "https://live.douyin.com/");
+        assert!(ua.contains("Chrome/92"), "抖音流应使用抖音 UA");
+    }
+
+    #[test]
+    fn bili_and_default_use_bilibili_headers() {
+        for p in ["bili", "bilibili", ""] {
+            let (ua, referer) = stream_request_headers(p);
+            assert_eq!(referer, "https://live.bilibili.com");
+            assert!(ua.contains("Chrome/120"), "B站流应使用 B站 UA");
+        }
+    }
 }

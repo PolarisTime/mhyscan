@@ -58,7 +58,7 @@ mhyscan help
 示例：
 ```bash
 mhyscan scan 6                       # B站 RID=6，默认 180s
-mhyscan scan 6 --platform douyin     # 抖音
+mhyscan scan 123456 --platform douyin  # 抖音：填 live.douyin.com/<web_rid> 里的 web_rid
 mhyscan scan 6 --timeout 600
 ```
 

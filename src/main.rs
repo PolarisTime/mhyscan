@@ -150,7 +150,7 @@ fn usage() {
          \n\
          用法:\n\
            mhyscan scan <RID> [--platform bili|douyin] [--timeout 秒]\n\
-               监视直播间，识别二维码并抢码\n\
+               监视直播间，识别二维码并抢码（抖音填 web_rid）\n\
          \n\
            mhyscan accounts                      列出已登录账号\n\
            mhyscan login                         米游社 App 扫码登录 (官服)\n\
