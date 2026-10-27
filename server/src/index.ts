@@ -7,7 +7,7 @@
  *   header X-Sign = hex( HMAC-SHA256( X-Ts || body, TELEMETRY_AUTH ) )
  *
  * 路由:
- *   POST /collect   接收事件
+ *   POST /v1/events 接收事件
  *   GET  /health    健康检查
  *   GET  /stats     聚合概览
  *   scheduled      每日聚合 + 清理过期数据
