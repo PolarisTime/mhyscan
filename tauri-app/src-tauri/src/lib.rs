@@ -15,6 +15,12 @@ struct AppState {
 }
 
 #[derive(Serialize)]
+struct DouyinCookieStatus {
+    source: String,
+    count: usize,
+}
+
+#[derive(Serialize)]
 struct BiliStatus {
     logged_in: bool,
     count: usize,
@@ -48,6 +54,24 @@ fn list_accounts() -> Result<Vec<AccountView>, String> {
 fn bili_status() -> BiliStatus {
     let (logged_in, count) = mhyscan_rs::bili_login::cookie_status();
     BiliStatus { logged_in, count }
+}
+
+#[tauri::command]
+fn douyin_cookie_status() -> DouyinCookieStatus {
+    let (source, count) = mhyscan_rs::douyin::cookie_info();
+    DouyinCookieStatus { source, count }
+}
+
+#[tauri::command]
+fn douyin_cookie_save(text: String) -> Result<DouyinCookieStatus, String> {
+    mhyscan_rs::douyin::save_cookie(&text).map_err(|e| e.to_string())?;
+    Ok(douyin_cookie_status())
+}
+
+#[tauri::command]
+fn douyin_cookie_clear() -> Result<DouyinCookieStatus, String> {
+    mhyscan_rs::douyin::clear_cookie().map_err(|e| e.to_string())?;
+    Ok(douyin_cookie_status())
 }
 
 #[tauri::command]
@@ -204,6 +228,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             bili_status,
+            douyin_cookie_status,
+            douyin_cookie_save,
+            douyin_cookie_clear,
             start_login,
             start_bili_login,
             scan,

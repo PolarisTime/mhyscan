@@ -24,7 +24,9 @@
 - 二维码识别（rxing / ZXing）
 - 官服扫码登录 + 抢码（passport `scan/confirm`）
 - B站扫码登录（保存拉流凭证 cookie）
-- 抖音直播流（原画优先，多 CDN；HLS 回退；Cookie 可用 `MHYSCAN_DOUYIN_COOKIE` 或 `Config/douyin_cookie.txt` 覆盖）
+- 抖音直播流（a_bogus 签名 + 原画优先多 CDN；API 失败自动回退页面内嵌数据；HLS 回退）
+  - Cookie 过期可在 GUI「运行环境 → 抖音 Cookie → 设置」里粘贴覆盖，也可用
+    `MHYSCAN_DOUYIN_COOKIE` 或 `Config/douyin_cookie.txt`
 - 多账号/单账号抢码、连接预热
 - 匿名遥测（可关闭，自建 Cloudflare Worker + D1）
 - 可选 Tauri 桌面端（`tauri-app/`，HTML 设计稿）

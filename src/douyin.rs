@@ -31,21 +31,142 @@ fn cookie() -> String {
             return c.trim().to_string();
         }
     }
-    for path in ["Config/douyin_cookie.txt", "douyin_cookie.txt"] {
-        if let Ok(c) = std::fs::read_to_string(path) {
-            let c = c.trim();
-            if !c.is_empty() {
-                return c.to_string();
-            }
+    if let Ok(c) = std::fs::read_to_string(cookie_path()) {
+        let c = c.trim();
+        if !c.is_empty() {
+            return c.to_string();
         }
     }
     DEFAULT_COOKIE.to_string()
+}
+
+/// 自定义 cookie 文件路径
+pub fn cookie_path() -> std::path::PathBuf {
+    std::path::PathBuf::from("Config/douyin_cookie.txt")
+}
+
+fn count_pairs(text: &str) -> usize {
+    text.split(';')
+        .filter(|p| p.trim().contains('='))
+        .count()
+}
+
+/// 当前生效的 cookie 来源与条数
+pub fn cookie_info() -> (String, usize) {
+    if let Ok(c) = std::env::var("MHYSCAN_DOUYIN_COOKIE") {
+        let c = c.trim();
+        if !c.is_empty() {
+            return ("环境变量".to_string(), count_pairs(c));
+        }
+    }
+    if let Ok(c) = std::fs::read_to_string(cookie_path()) {
+        let c = c.trim();
+        if !c.is_empty() {
+            return ("自定义".to_string(), count_pairs(c));
+        }
+    }
+    ("内置快照".to_string(), count_pairs(DEFAULT_COOKIE))
+}
+
+/// 保存用户粘贴的 cookie（形如 `a=1; b=2`）
+pub fn save_cookie(text: &str) -> Result<usize> {
+    let text = text.trim();
+    if text.is_empty() {
+        bail!("cookie 不能为空");
+    }
+    if !text.contains('=') {
+        bail!("格式不对：应形如 `name=value; name2=value2`");
+    }
+    let n = count_pairs(text);
+    if n == 0 {
+        bail!("没有解析到任何 cookie 项");
+    }
+    let path = cookie_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, text)?;
+    Ok(n)
+}
+
+/// 删除自定义 cookie，回退到内置快照
+pub fn clear_cookie() -> Result<()> {
+    let path = cookie_path();
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
 }
 
 /// 抖音直播间 FLV 候选（按「原画优先 + 多 CDN 容灾」排序）。
 ///
 /// 入参是 `web_rid`（`live.douyin.com/<web_rid>` 里的那串），不是 B 站式房间号。
 pub async fn get_candidates(room_id: &str) -> Result<Vec<String>> {
+    match api_candidates(room_id).await {
+        Ok(urls) if !urls.is_empty() => Ok(urls),
+        Ok(_) => page_candidates(room_id).await,
+        Err(api_err) => match page_candidates(room_id).await {
+            Ok(urls) if !urls.is_empty() => Ok(urls),
+            Ok(_) => Err(api_err),
+            Err(_) => Err(api_err),
+        },
+    }
+}
+
+/// 页面兜底：直播间 HTML 里内嵌了 `stream_url.flv_pull_url`，无需签名/cookie
+pub async fn page_candidates(room_id: &str) -> Result<Vec<String>> {
+    let client = Client::new();
+    let url = format!("https://live.douyin.com/{room_id}");
+    let html = client
+        .get(&url)
+        .header("User-Agent", UA)
+        .header("referer", REFERER)
+        .send()
+        .await?
+        .text()
+        .await?;
+    let urls = extract_page_urls(&html);
+    if urls.is_empty() {
+        bail!("页面兜底未找到直播流地址（可能未开播或页面改版）");
+    }
+    Ok(urls)
+}
+
+/// 从直播间页面 HTML 提取 flv/hls 地址（优先原画）
+fn extract_page_urls(html: &str) -> Vec<String> {
+    // 页面里的 JSON 被转义过：\" 和 \u0026
+    let normalized = html
+        .replace("\\u0026", "&")
+        .replace("\\/", "/")
+        .replace("\\\"", "\"");
+
+    let mut out: Vec<String> = Vec::new();
+    for key in ["flv_pull_url", "hls_pull_url_map"] {
+        let Some(pos) = normalized.find(&format!("\"{key}\"")) else {
+            continue;
+        };
+        let rest = &normalized[pos..];
+        let Some(open) = rest.find('{') else { continue };
+        let Some(close) = rest[open..].find('}') else { continue };
+        let body = &rest[open + 1..open + close];
+        // 形如 "FULL_HD1":"http://...","HD1":"http://..."
+        for ent in body.split("\",\"") {
+            let ent = ent.trim_matches('"');
+            if let Some((_k, v)) = ent.split_once("\":\"") {
+                let v = v.trim_end_matches('"').trim();
+                if v.starts_with("http") && !out.iter().any(|u| u == v) {
+                    out.push(v.to_string());
+                }
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+async fn api_candidates(room_id: &str) -> Result<Vec<String>> {
     let client = Client::new();
     let params = format!(
         "aid=6383&app_name=douyin_web&live_id=1&device_platform=web&\
@@ -317,5 +438,22 @@ mod tests {
         }]}});
         let room = room_data(&resp).expect("应能取到 room");
         assert_eq!(extract_stream_urls(room).len(), 1);
+    }
+
+    #[test]
+    fn extracts_stream_urls_from_page_html() {
+        // 页面里 JSON 被转义：\" 与 \u0026
+        let html = r#"<script>self.__pace_f.push([1,"{\"stream_url\":{\"flv_pull_url\":{\"FULL_HD1\":\"http://pull-flv.example.com/or4.flv?expire=1\u0026sign=abc\",\"HD1\":\"http://pull-flv.example.com/hd.flv\"}}}"])</script>"#;
+        let urls = extract_page_urls(html);
+        assert!(urls.iter().any(|u| u.contains("or4.flv")), "urls={urls:?}");
+        assert!(urls[0].contains("&sign=abc"), "应还原 \\u0026: {urls:?}");
+    }
+
+    #[test]
+    fn counts_cookie_pairs() {
+        assert_eq!(count_pairs("ttwid=a; odin_tt=b; junk"), 2);
+        assert_eq!(count_pairs(""), 0);
+        assert!(save_cookie("").is_err(), "空 cookie 应报错");
+        assert!(save_cookie("no-equals-sign").is_err(), "格式错误应报错");
     }
 }

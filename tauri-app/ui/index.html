@@ -505,6 +505,13 @@
             <button class="btn-ghost mini" id="bili-login-btn" onclick="ui.openLogin('bili')" title="B站扫码登录（拉流凭证）">登录</button>
           </span>
         </div>
+        <div class="kv">
+          <span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-tv"/></svg>抖音 Cookie</span>
+          <span class="kv-act">
+            <span class="v" id="kv-douyin-cookie">内置快照</span>
+            <button class="btn-ghost mini" id="douyin-cookie-btn" onclick="ui.openCookie()" title="设置抖音 Cookie（拉流凭证）">设置</button>
+          </span>
+        </div>
         <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-bolt"/></svg>识别引擎</span><span class="v">openh264 · rxing</span></div>
       </div>
     </section>
@@ -627,6 +634,25 @@
     <div class="dialog-f">
       <button class="btn-ghost" id="login-switch" onclick="ui.switchLogin()">B站登录</button>
       <button class="btn-ghost" id="login-ok" onclick="ui.closeLogin()">取消</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="cookie-overlay" onclick="if(event.target===this)ui.closeCookie()">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="cookie-title">
+    <div class="dialog-h">
+      <h3 id="cookie-title">抖音 Cookie</h3>
+      <button class="x" onclick="ui.closeCookie()" aria-label="关闭"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="dialog-b" style="align-items:stretch;gap:8px">
+      <div class="hint-text" style="text-align:left">在浏览器打开 live.douyin.com，F12 → Network → 任意请求的 <code>Cookie</code> 请求头，整段粘贴到这里。内置快照过期时用它替换。</div>
+      <textarea id="cookie-text" spellcheck="false" placeholder="ttwid=...; odin_tt=...; ..."
+        style="width:100%;height:92px;padding:8px;border-radius:9px;border:1px solid var(--line);background:var(--panel-2);color:var(--text);font-family:var(--mono);font-size:11px;line-height:1.5;resize:none;outline:none"></textarea>
+      <div class="hint-sub" id="cookie-status" style="text-align:left">当前：内置快照</div>
+    </div>
+    <div class="dialog-f">
+      <button class="btn-ghost" onclick="ui.clearCookie()">恢复内置</button>
+      <button class="btn-ghost primary" onclick="ui.saveCookie()">保存</button>
     </div>
   </div>
 </div>
@@ -1295,7 +1321,10 @@ async function wire() {
   });
   window.addEventListener("keydown", (e) => {
     const typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable);
-    if (e.code === "Escape" && state.login.open) { e.preventDefault(); closeLogin(); return; }
+    if (e.code === "Escape") {
+      if (state.login.open) { e.preventDefault(); closeLogin(); return; }
+      if ($("cookie-overlay").classList.contains("show")) { e.preventDefault(); closeCookie(); return; }
+    }
     if (e.code === "Space" && !typing && !state.login.open) { e.preventDefault(); toggleScan(); }
   });
 
@@ -1314,6 +1343,11 @@ async function wire() {
   await listen("login-done", (e) => onLoginDone(e.payload));
   await loadAccounts();
   try {
+    setDouyinCookieStatus(await invoke("douyin_cookie_status"));
+  } catch (e) {
+    // 旧后端无此命令时忽略
+  }
+  try {
     const bili = await invoke("bili_status");
     if (bili && bili.logged_in) {
       $("kv-bili").textContent = `已登录 · ${bili.count} cookies`;
@@ -1325,7 +1359,57 @@ async function wire() {
   }
 }
 
+function setDouyinCookieStatus(info) {
+  if (!info || !info.source) return;
+  const text = info.source === "内置快照" ? "内置快照" : `${info.source} · ${info.count} 项`;
+  $("kv-douyin-cookie").textContent = text;
+  $("cookie-status").textContent = `当前：${text}`;
+}
+
+async function openCookie() {
+  $("cookie-overlay").classList.add("show");
+  if (!IN_TAURI) {
+    $("cookie-status").textContent = "当前：演示模式（未连接后端）";
+    return;
+  }
+  try {
+    setDouyinCookieStatus(await invoke("douyin_cookie_status"));
+  } catch (e) {
+    $("cookie-status").textContent = "状态读取失败";
+  }
+}
+
+function closeCookie() {
+  $("cookie-overlay").classList.remove("show");
+}
+
+async function saveCookie() {
+  const text = $("cookie-text").value.trim();
+  if (!text) { toast("请先粘贴 Cookie", true); return; }
+  if (!IN_TAURI) { toast("演示模式：未连接后端", true); return; }
+  try {
+    const info = await invoke("douyin_cookie_save", { text });
+    setDouyinCookieStatus(info);
+    toast("抖音 Cookie 已保存");
+    closeCookie();
+  } catch (e) {
+    toast(`保存失败: ${e}`, true);
+  }
+}
+
+async function clearCookie() {
+  if (!IN_TAURI) { toast("演示模式：未连接后端", true); return; }
+  try {
+    setDouyinCookieStatus(await invoke("douyin_cookie_clear"));
+    toast("已恢复内置 Cookie");
+    closeCookie();
+  } catch (e) {
+    toast(`恢复失败: ${e}`, true);
+  }
+}
+
 const ui = {
+  openCookie, closeCookie, saveCookie, clearCookie,
   openLogin, closeLogin, switchLogin,
   toggleScan, clearFeed, clearLogs, exportLogs,
   filterLogs, searchLogs, scrollLogsToBottom,
