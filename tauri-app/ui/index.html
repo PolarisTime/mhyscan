@@ -239,6 +239,8 @@
   }
   .btn-ghost:hover { border-color: var(--line-strong); color: var(--text); background: var(--panel-3); }
   .btn-ghost.icon-only { width: 26px; padding: 0; justify-content: center; }
+  .btn-ghost.mini { height: 20px; padding: 0 6px; font-size: 10px; border-radius: 5px; }
+  .kv-act { display: inline-flex; align-items: center; gap: 6px; }
   .btn-ghost.accent { color: var(--accent); border-color: rgba(61, 220, 151, 0.28); background: var(--accent-soft); }
   .btn-ghost.accent:hover { background: rgba(61, 220, 151, 0.18); border-color: rgba(61, 220, 151, 0.4); }
 
@@ -495,7 +497,13 @@
       <div class="card-h"><span class="card-t">运行环境</span></div>
       <div class="card-b" style="display:flex;flex-direction:column;gap:1px">
         <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-qr"/></svg>米哈游账号</span><span class="v" id="kv-mhy">未绑定</span></div>
-        <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-tv"/></svg>B站凭证</span><span class="v" id="kv-bili">未登录</span></div>
+        <div class="kv">
+          <span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-tv"/></svg>B站凭证</span>
+          <span class="kv-act">
+            <span class="v" id="kv-bili">未登录</span>
+            <button class="btn-ghost mini" id="bili-login-btn" onclick="ui.openLogin('bili')" title="B站扫码登录（拉流凭证）">登录</button>
+          </span>
+        </div>
         <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-bolt"/></svg>识别引擎</span><span class="v">openh264 · rxing</span></div>
       </div>
     </section>
@@ -1003,9 +1011,13 @@ async function loadAccounts() {
 }
 
 async function openLogin(kind) {
-  if (state.login.busy) { showLogin(true); return; }
+  const want = kind || "mihoyo";
+  if (state.login.busy && state.login.open && state.login.kind === want) { showLogin(true); return; }
+  // 切换类型时放弃上一轮会话（后端轮询仍在跑，但结果会被忽略）
+  if (state.login.busy) closeLogin();
   const session = ++state.login.session;
-  state.login.kind = kind || "mihoyo";
+  state.login.kind = want;
+  state.login.expectKind = want;
   state.login.busy = true;
   const isBili = state.login.kind === "bili";
   $("login-title").textContent = isBili ? "B站扫码登录" : "米哈游通行证扫码登录";
@@ -1077,32 +1089,43 @@ function onQr(dataUrl) {
 
 function onLoginStatus(status) {
   if (!state.login.open) return;
-  const text = String(status);
+  const text = String(status)
+    .replace(/^[\s·]*扫码状态[:：]\s*/, "")
+    .replace(/\s*\(code=\d+\)/, "")
+    .trim();
   const map = {
-    scanned: "已扫码，等待手机确认…",
-    confirmed: "已确认，正在写入账号…",
-    expired: "二维码已过期，请重新登录",
-  }[text.toLowerCase()];
-  $("login-hint").textContent = map || `状态: ${text}`;
-  if (/expired/i.test(text)) $("login-hint").style.color = "var(--err)";
+    "scanned": "已扫码，等待手机确认…",
+    "confirmed": "已确认，正在写入账号…",
+    "expired": "二维码已过期，请重新登录",
+    "已扫描，等待确认": "已扫码，等待手机确认…",
+    "登录成功": "已确认，正在写入凭证…",
+    "二维码已失效": "二维码已过期，请重新登录",
+    "二维码未扫描": "等待手机扫码…",
+  };
+  $("login-hint").textContent = map[text.toLowerCase()] || text || "等待扫码…";
+  if (/失效|过期|expired/i.test(text)) $("login-hint").style.color = "var(--err)";
+  else $("login-hint").style.color = "";
 }
 
 function onLoginDone(payload) {
   const msg = String(payload);
   // 用 payload 特征判断登录类型，避免切换登录后事件串台
-  if (/cookie/i.test(msg)) {
+  const isBiliPayload = /cookie/i.test(msg);
+  const matchesOpen = state.login.open && (state.login.expectKind === "bili") === isBiliPayload;
+  if (isBiliPayload) {
     const n = (msg.match(/(\d+)\s*个?\s*cookie/i) || [])[1];
     $("kv-bili").textContent = n ? `已登录 · ${n} cookies` : "已登录";
     $("kv-bili").className = "v ok";
+    $("bili-login-btn").textContent = "重新登录";
     addLog("LOGIN", `B站登录完成: ${msg}`);
-    if (state.login.open) {
+    if (matchesOpen) {
       $("login-hint").textContent = "B站凭证已保存";
       $("login-hint").style.color = "var(--accent)";
     }
     toast("B站登录成功");
   } else {
     addLog("LOGIN", `米哈游登录完成: ${msg}`);
-    if (state.login.open) {
+    if (matchesOpen) {
       $("login-hint").textContent = `登录成功: ${msg}`;
       $("login-hint").style.color = "var(--accent)";
     }
@@ -1110,7 +1133,7 @@ function onLoginDone(payload) {
     toast("账号已绑定");
   }
   state.login.busy = false;
-  setTimeout(() => { if (state.login.open) closeLogin(); }, 900);
+  if (matchesOpen) setTimeout(() => closeLogin(), 900);
 }
 
 /* ============================================================
@@ -1282,6 +1305,16 @@ async function wire() {
   await listen("login-status", (e) => onLoginStatus(e.payload));
   await listen("login-done", (e) => onLoginDone(e.payload));
   await loadAccounts();
+  try {
+    const bili = await invoke("bili_status");
+    if (bili && bili.logged_in) {
+      $("kv-bili").textContent = `已登录 · ${bili.count} cookies`;
+      $("kv-bili").className = "v ok";
+      $("bili-login-btn").textContent = "重新登录";
+    }
+  } catch (e) {
+    // 旧版后端没有 bili_status 命令时忽略
+  }
 }
 
 const ui = {

@@ -15,6 +15,12 @@ struct AppState {
 }
 
 #[derive(Serialize)]
+struct BiliStatus {
+    logged_in: bool,
+    count: usize,
+}
+
+#[derive(Serialize)]
 struct AccountView {
     name: String,
     uid: String,
@@ -35,6 +41,13 @@ fn list_accounts() -> Result<Vec<AccountView>, String> {
             r#type: a.type_,
         })
         .collect())
+}
+
+/// B站拉流凭证是否已保存（启动时让界面显示真实登录态）
+#[tauri::command]
+fn bili_status() -> BiliStatus {
+    let (logged_in, count) = mhyscan_rs::bili_login::cookie_status();
+    BiliStatus { logged_in, count }
 }
 
 #[tauri::command]
@@ -190,6 +203,7 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             list_accounts,
+            bili_status,
             start_login,
             start_bili_login,
             scan,
