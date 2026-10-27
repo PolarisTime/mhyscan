@@ -313,6 +313,7 @@ async fn send(
     let mut req = http
         .post(url)
         .header("Content-Type", "application/octet-stream")
+        .header("Accept", "application/json")
         .header("X-Install-Id", install);
 
     if let Some(auth) = auth {

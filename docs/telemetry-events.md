@@ -1,9 +1,13 @@
 # mhyscan 遥测事件数据字典
 
 - `schema_version`: **1**（只增字段不改语义；破坏性变更才升版本）
+- 上报接口：`POST /v1/events`（旧路径 `/collect` 保留为别名，兼容已发布客户端）
 - 上报格式：`nonce(12B) || AES-256-GCM( gzip( JSON ) )`，body 为单个事件对象或事件数组
 - 鉴权：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
-- 传输：`application/octet-stream`
+- 请求头：`Content-Type: application/octet-stream`、`Accept: application/json`
+- 成功响应：`202 Accepted`，body `{ "accepted": n, "rejected": n }`
+- 错误响应：RFC 9457 `application/problem+json`（`type/title/status/detail/instance`）
+- 状态码：401 签名/时钟、400 解密/解压/JSON、413 体积、415 Content-Type、422 批量条数、503 依赖不可用
 
 ## 信封字段（每个事件都带）
 
@@ -46,7 +50,8 @@
 | `events` | 原始事件（含 `props`、`ip_prefix`） | 90 天（Cron 清理） |
 | `scan_success` | 抢码成功/尝试记录（便于聚合） | 长期 |
 | `daily_stats` | 按天 × 事件聚合（`installs`,`total`） | 长期 |
-| `/stats` | 聚合概览接口；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
+| `GET /v1/health` | 健康检查：`status/version/commit/time/checks.db/runtime.colo`，依赖异常返回 503 | — |
+| `GET /v1/stats?days=1..365` | 聚合概览；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
 
 ## 隐私约束（禁止上报）
 

@@ -79,7 +79,14 @@ mhyscan scan 6 --timeout 600
 
 ## 遥测后端（自建）
 
-`server/` 为 Cloudflare Worker + D1：`/collect` 接收（HMAC + AES-256-GCM + gzip）、每日 Cron 聚合与 90 天清理；`/stats` 可选 `STATS_TOKEN` 鉴权。CLI 与 GUI 都会在启动/定时/退出时上报（GUI 需带遥测环境变量启动）。见 `docs/telemetry-events.md`。
+`server/` 为 Cloudflare Worker + D1（RESTful）：
+
+- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip，成功 202；`/collect` 为兼容别名）
+- `GET /v1/health` 健康检查（含 D1 探测与版本/commit；异常返回 503）
+- `GET /v1/stats?days=1..365` 聚合概览（可选 `STATS_TOKEN` 鉴权）
+- 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理
+
+CLI 与 GUI 都会在启动/定时/退出时上报（GUI 需带遥测环境变量启动）。见 `docs/telemetry-events.md`。
 
 部署：
 ```bash

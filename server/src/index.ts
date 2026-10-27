@@ -21,6 +21,9 @@ interface Env {
   CLOCK_SKEW: string;
   /// 可选：设置后 /stats 需要 ?token= 或 Authorization: Bearer
   STATS_TOKEN?: string;
+  /// 部署版本与提交（wrangler vars / --var 注入）
+  SERVICE_VERSION?: string;
+  GIT_SHA?: string;
 }
 
 interface TelemetryEvent {
@@ -34,25 +37,77 @@ interface TelemetryEvent {
   props?: Record<string, unknown>;
 }
 
+const API_VERSION = "v1";
+const BASE = `/${API_VERSION}`;
+
+/** RFC 9457 Problem Details */
+function problem(
+  status: number,
+  title: string,
+  detail?: string,
+  instance?: string,
+  headers: Record<string, string> = {},
+): Response {
+  const body = {
+    type: "about:blank",
+    title,
+    status,
+    ...(detail ? { detail } : {}),
+    ...(instance ? { instance } : {}),
+  };
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/problem+json",
+      "cache-control": "no-store",
+      ...headers,
+    },
+  });
+}
+
+function allowHeader(allow: string[]): Record<string, string> {
+  return { allow: [...allow, "OPTIONS"].join(", ") };
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const method = request.method.toUpperCase();
 
-    if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true, service: "mhyscan-telemetry" });
+    // 资源 → 允许的方法（旧路径保留为别名，兼容已发布客户端）
+    const routes: Record<string, string[]> = {
+      [`${BASE}/events`]: ["POST"],
+      [`${BASE}/health`]: ["GET", "HEAD"],
+      [`${BASE}/stats`]: ["GET", "HEAD"],
+      "/collect": ["POST"],
+      "/health": ["GET", "HEAD"],
+      "/stats": ["GET", "HEAD"],
+    };
+
+    if (path === "/" && method === "GET") return index();
+
+    const allow = routes[path];
+    if (!allow) return problem(404, "Not Found", `${method} ${path} 未找到`, path);
+    if (method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: allowHeader(allow) });
     }
-    if (request.method === "GET" && url.pathname === "/stats") {
-      if (env.STATS_TOKEN) {
-        const bearer = request.headers.get("Authorization")?.replace(/^Bearer\s+/i, "");
-        const token = url.searchParams.get("token") || bearer || "";
-        if (token !== env.STATS_TOKEN) return json({ error: "unauthorized" }, 401);
+    if (!allow.includes(method)) {
+      return problem(405, "Method Not Allowed", undefined, path, allowHeader(allow));
+    }
+
+    if (path.endsWith("/health")) return health(request, env);
+    if (path.endsWith("/events") || path === "/collect") {
+      const ct = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+      if (ct !== "application/octet-stream") {
+        return problem(415, "Unsupported Media Type", "Content-Type 必须为 application/octet-stream", path);
       }
-      return stats(env);
-    }
-    if (request.method === "POST" && url.pathname === "/collect") {
       return collect(request, env);
     }
-    return json({ error: "not found" }, 404);
+
+    const denied = statsAuth(request, env);
+    if (denied) return denied;
+    return stats(request, env, url);
   },
 
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
@@ -77,33 +132,90 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+function index(): Response {
+  return new Response(
+    JSON.stringify({
+      service: "mhyscan-telemetry",
+      version: API_VERSION,
+      endpoints: {
+        events: { method: "POST", path: `${BASE}/events`, media_type: "application/octet-stream" },
+        health: { method: "GET", path: `${BASE}/health` },
+        stats: { method: "GET", path: `${BASE}/stats`, query: { days: "1..365, default 60" } },
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } },
+  );
+}
+
+function statsAuth(request: Request, env: Env): Response | null {
+  if (!env.STATS_TOKEN) return null;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  const token = new URL(request.url).searchParams.get("token") || bearer || "";
+  if (token !== env.STATS_TOKEN) {
+    return problem(401, "Unauthorized", "缺少或错误的 STATS_TOKEN", "/v1/stats", {
+      "www-authenticate": 'Bearer realm="stats"',
+    });
+  }
+  return null;
+}
+
+async function health(request: Request, env: Env): Promise<Response> {
+  const started = Date.now();
+  let dbOk = false;
+  let dbError: string | undefined;
+  try {
+    await env.DB.prepare("SELECT 1 AS ok").first();
+    dbOk = true;
+  } catch (e) {
+    dbError = e instanceof Error ? e.message.slice(0, 120) : "unavailable";
+  }
+  const latency = Date.now() - started;
+  const body = {
+    status: dbOk ? "ok" : "degraded",
+    service: "mhyscan-telemetry",
+    version: env.SERVICE_VERSION || "dev",
+    commit: env.GIT_SHA || null,
+    time: Math.floor(Date.now() / 1000),
+    checks: {
+      db: { ok: dbOk, latency_ms: latency, ...(dbError ? { error: dbError } : {}) },
+    },
+    runtime: { colo: (request.cf?.colo as string | undefined) ?? null },
+  };
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+  };
+  const status = dbOk ? 200 : 503;
+  return new Response(request.method === "HEAD" ? null : JSON.stringify(body), { status, headers });
+}
+
 async function collect(request: Request, env: Env): Promise<Response> {
   const tsHeader = request.headers.get("X-Ts");
   const signHeader = request.headers.get("X-Sign");
-  if (!tsHeader || !signHeader) return json({ error: "missing signature" }, 401);
+  if (!tsHeader || !signHeader) return problem(401, "Unauthorized", "缺少 X-Ts / X-Sign");
 
   const ts = parseInt(tsHeader, 10);
   const skew = parseInt(env.CLOCK_SKEW || "300", 10);
   const now = Math.floor(Date.now() / 1000);
   if (!Number.isFinite(ts) || Math.abs(now - ts) > skew) {
-    return json({ error: "expired" }, 401);
+    return problem(401, "Unauthorized", "时间戳超出允许的时钟偏移");
   }
 
   const body = new Uint8Array(await request.arrayBuffer());
   if (body.length === 0 || body.length > 64 * 1024) {
-    return json({ error: "bad size" }, 413);
+    return problem(413, "Payload Too Large", "body 必须为 1B..64KB");
   }
 
   // 1) HMAC 验签
   const ok = await verifyHmac(tsHeader, body, signHeader, env.TELEMETRY_AUTH);
-  if (!ok) return json({ error: "bad signature" }, 401);
+  if (!ok) return problem(401, "Unauthorized", "HMAC 验签失败");
 
   // 2) AES-256-GCM 解密
   let plain: Uint8Array;
   try {
     plain = await decrypt(body, env.TELEMETRY_KEY);
   } catch {
-    return json({ error: "decrypt failed" }, 400);
+    return problem(400, "Bad Request", "AES-256-GCM 解密失败");
   }
 
   // 3) gzip 解压
@@ -111,7 +223,7 @@ async function collect(request: Request, env: Env): Promise<Response> {
   try {
     text = await gunzip(plain);
   } catch {
-    return json({ error: "decompress failed" }, 400);
+    return problem(400, "Bad Request", "gzip 解压失败");
   }
 
   // 4) 解析（兼容单条对象或数组批量）并入库
@@ -119,21 +231,23 @@ async function collect(request: Request, env: Env): Promise<Response> {
   try {
     data = JSON.parse(text);
   } catch {
-    return json({ error: "bad json" }, 400);
+    return problem(400, "Bad Request", "JSON 解析失败");
   }
   const list: unknown[] = Array.isArray(data) ? data : [data];
   if (list.length === 0 || list.length > 256) {
-    return json({ error: "bad batch size" }, 400);
+    return problem(422, "Unprocessable Content", "批量条数必须为 1..256");
   }
 
   const ipPrefix = truncateIp(request.headers.get("CF-Connecting-IP") || "");
 
+  let accepted = 0;
   // 分批写入，避免单次 batch 语句过多
   for (let i = 0; i < list.length; i += 64) {
     const stmts: D1PreparedStatement[] = [];
     for (const raw of list.slice(i, i + 64)) {
       const ev = raw as TelemetryEvent;
       if (!ev || !ev.install_id || !ev.event) continue;
+      accepted += 1;
       const eventTs = Number.isFinite(Number(ev.ts)) ? Number(ev.ts) : now;
 
       stmts.push(
@@ -179,18 +293,43 @@ async function collect(request: Request, env: Env): Promise<Response> {
     if (stmts.length) await env.DB.batch(stmts);
   }
 
-  return json({ ok: true, count: list.length });
+  return new Response(
+    JSON.stringify({ accepted: list.length, rejected: list.length - accepted }),
+    { status: 202, headers: { "content-type": "application/json", "cache-control": "no-store" } },
+  );
 }
 
-async function stats(env: Env): Promise<Response> {
+async function stats(request: Request, env: Env, url: URL): Promise<Response> {
+  const raw = url.searchParams.get("days") ?? "60";
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return problem(400, "Bad Request", "days 必须是 1..365 的整数", url.pathname);
+  }
+
   const daily = await env.DB.prepare(
-    `SELECT day, event, installs, total FROM daily_stats ORDER BY day DESC LIMIT 60`
-  ).all();
+    `SELECT day, event, installs, total
+       FROM daily_stats
+      WHERE day >= date('now', ?)
+      ORDER BY day DESC`
+  )
+    .bind(`-${days} day`)
+    .all();
   const success = await env.DB.prepare(
-    `SELECT platform, COUNT(*) AS total, COUNT(DISTINCT uid_hash) AS uniq
-     FROM scan_success WHERE uid_hash IS NOT NULL GROUP BY platform`
+    `SELECT platform, COUNT(*) AS total
+       FROM scan_success
+      GROUP BY platform`
   ).all();
-  return json({ daily: daily.results, success: success.results });
+
+  const body = {
+    generated_at: Math.floor(Date.now() / 1000),
+    window_days: days,
+    daily: daily.results,
+    success: success.results,
+  };
+  return new Response(request.method === "HEAD" ? null : JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
 }
 
 /* ---------------- crypto helpers ---------------- */
@@ -260,6 +399,6 @@ function num(v: unknown): number | null {
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 }

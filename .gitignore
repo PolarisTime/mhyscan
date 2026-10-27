@@ -27,3 +27,4 @@ config/
 *.pem
 *.key
 .env
+server/.dev.vars
