@@ -12,12 +12,18 @@ const REFERER: &str = "https://live.bilibili.com";
 /// 同一档位返回多个 CDN 候选（url_info），供上层择优/容灾。
 pub async fn get_candidates(room_id: &str) -> Result<Vec<String>> {
     let client = Client::new();
+    // 登录后带上 cookie：原画(qn=10000)与高码率需要登录态
+    let cookie = crate::bili_login::cookie_header();
 
-    let init: Value = client
+    let mut init_req = client
         .get("https://api.live.bilibili.com/room/v1/Room/room_init")
         .query(&[("id", room_id)])
         .header("User-Agent", UA)
-        .header("Referer", REFERER)
+        .header("Referer", REFERER);
+    if let Some(c) = &cookie {
+        init_req = init_req.header("Cookie", c);
+    }
+    let init: Value = init_req
         .send()
         .await
         .context("room_init 请求失败")?
@@ -42,12 +48,12 @@ pub async fn get_candidates(room_id: &str) -> Result<Vec<String>> {
     let mut candidates = Vec::new();
 
     // HTTP-FLV + AVC (protocol=0, format=0, codec=0) —— 延迟最低
-    candidates.extend(fetch_variants(&client, &real_room, "0", "0", "0").await);
+    candidates.extend(fetch_variants(&client, &real_room, "0", "0", "0", cookie.as_deref()).await);
 
     // HLS 回退 (protocol=1): fmp4 优先于 ts
     if candidates.is_empty() {
-        candidates.extend(fetch_variants(&client, &real_room, "1", "2", "0").await);
-        candidates.extend(fetch_variants(&client, &real_room, "1", "1", "0").await);
+        candidates.extend(fetch_variants(&client, &real_room, "1", "2", "0", cookie.as_deref()).await);
+        candidates.extend(fetch_variants(&client, &real_room, "1", "1", "0", cookie.as_deref()).await);
     }
 
     if candidates.is_empty() {
@@ -63,8 +69,9 @@ async fn fetch_variants(
     protocol: &str,
     format: &str,
     codec: &str,
+    cookie: Option<&str>,
 ) -> Vec<String> {
-    let resp: Value = match client
+    let mut req = client
         .get("https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo")
         .query(&[
             ("room_id", room_id),
@@ -77,10 +84,11 @@ async fn fetch_variants(
             ("dolby", "5"),
         ])
         .header("User-Agent", UA)
-        .header("Referer", REFERER)
-        .send()
-        .await
-    {
+        .header("Referer", REFERER);
+    if let Some(c) = cookie {
+        req = req.header("Cookie", c);
+    }
+    let resp: Value = match req.send().await {
         Ok(r) => match r.json().await {
             Ok(j) => j,
             Err(_) => return Vec::new(),

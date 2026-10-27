@@ -9,9 +9,30 @@ use mhyscan_rs::{ScanOutcome, run_scan};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
-#[derive(Default)]
 struct AppState {
     scanning: Mutex<Option<Arc<AtomicBool>>>,
+    telemetry: Option<Telemetry>,
+}
+
+impl AppState {
+    fn new() -> Self {
+        Self {
+            scanning: Mutex::new(None),
+            telemetry: Telemetry::from_env(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DouyinCookieStatus {
+    source: String,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct BiliStatus {
+    logged_in: bool,
+    count: usize,
 }
 
 #[derive(Serialize)]
@@ -35,6 +56,31 @@ fn list_accounts() -> Result<Vec<AccountView>, String> {
             r#type: a.type_,
         })
         .collect())
+}
+
+/// B站拉流凭证是否已保存（启动时让界面显示真实登录态）
+#[tauri::command]
+fn bili_status() -> BiliStatus {
+    let (logged_in, count) = mhyscan_rs::bili_login::cookie_status();
+    BiliStatus { logged_in, count }
+}
+
+#[tauri::command]
+fn douyin_cookie_status() -> DouyinCookieStatus {
+    let (source, count) = mhyscan_rs::douyin::cookie_info();
+    DouyinCookieStatus { source, count }
+}
+
+#[tauri::command]
+fn douyin_cookie_save(text: String) -> Result<DouyinCookieStatus, String> {
+    mhyscan_rs::douyin::save_cookie(&text).map_err(|e| e.to_string())?;
+    Ok(douyin_cookie_status())
+}
+
+#[tauri::command]
+fn douyin_cookie_clear() -> Result<DouyinCookieStatus, String> {
+    mhyscan_rs::douyin::clear_cookie().map_err(|e| e.to_string())?;
+    Ok(douyin_cookie_status())
 }
 
 #[tauri::command]
@@ -148,7 +194,7 @@ async fn scan(
     let stop = Arc::new(AtomicBool::new(false));
     *state.scanning.lock().unwrap() = Some(stop.clone());
 
-    let telemetry = Telemetry::from_env();
+    let telemetry = state.telemetry.clone();
     let app_for_log = app.clone();
     let log = move |s: String| {
         let _ = app_for_log.emit("scan-log", s);
@@ -187,14 +233,45 @@ fn stop_scan(state: State<'_, AppState>) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState::default())
+        .manage(AppState::new())
+        .setup(|app| {
+            use tauri::Manager;
+            // 启动：补发 spool → 记录 app_start → 定时上报 + 立即上报一次
+            if let Some(t) = app.state::<AppState>().telemetry.clone() {
+                t.load_spool();
+                t.record_env("gui");
+                t.start_auto_flush();
+                tauri::async_runtime::spawn(async move {
+                    let _ = t.flush().await;
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
+            bili_status,
+            douyin_cookie_status,
+            douyin_cookie_save,
+            douyin_cookie_clear,
             start_login,
             start_bili_login,
             scan,
             stop_scan
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                use tauri::Manager;
+                if let Some(t) = app.state::<AppState>().telemetry.clone() {
+                    // 退出前尽力上报；失败的落盘，下次启动补发
+                    let handle = std::thread::spawn(move || {
+                        tauri::async_runtime::block_on(async move {
+                            t.flush_or_spool().await;
+                        });
+                    });
+                    let _ = handle.join();
+                }
+            }
+        });
 }

@@ -1370,7 +1370,7 @@ dependencies = [
 
 [[package]]
 name = "mhyscan-rs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes 0.8.4",
  "aes-gcm",
@@ -1396,6 +1396,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sm3",
  "tokio",
  "url",
 ]
@@ -2541,6 +2542,15 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+
+[[package]]
+name = "sm3"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da6a89ba31723d185fd7413b98c576a575f356d9b84729d8ecb6ead60000a5b6"
+dependencies = [
+ "digest 0.11.3",
+]
 
 [[package]]
 name = "smallvec"

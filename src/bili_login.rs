@@ -162,6 +162,42 @@ pub fn save_cookies(cookies: &[Value]) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// 读取已保存的 cookie 列表（无文件/空列表返回 None）
+pub fn load_saved_cookies() -> Option<Vec<Value>> {
+    let raw = std::fs::read_to_string(cookie_path()).ok()?;
+    let v: Value = serde_json::from_str(&raw).ok()?;
+    let arr = v
+        .get("cookie_info")
+        .and_then(|c| c.get("cookies"))
+        .or_else(|| v.get("cookies"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if arr.is_empty() { None } else { Some(arr) }
+}
+
+/// B站登录态：(是否已登录, cookie 数)
+pub fn cookie_status() -> (bool, usize) {
+    match load_saved_cookies() {
+        Some(c) => (true, c.len()),
+        None => (false, 0),
+    }
+}
+
+/// 拉流请求用的 Cookie 头（未登录返回 None）
+pub fn cookie_header() -> Option<String> {
+    let cookies = load_saved_cookies()?;
+    let parts: Vec<String> = cookies
+        .iter()
+        .filter_map(|c| {
+            let name = c.get("name").and_then(Value::as_str)?;
+            let value = c.get("value").and_then(Value::as_str).unwrap_or("");
+            Some(format!("{name}={value}"))
+        })
+        .collect();
+    if parts.is_empty() { None } else { Some(parts.join("; ")) }
+}
+
 pub fn cookie_summary(cookies: &[Value]) -> String {
     let names: Vec<&str> = cookies
         .iter()

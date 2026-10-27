@@ -1,5 +1,5 @@
 use anyhow::Result;
-use openh264::decoder::Decoder;
+use openh264::decoder::{DecodeOptions, Decoder, Flush};
 use openh264::formats::YUVSource;
 
 use crate::flv::VideoUnit;
@@ -16,6 +16,29 @@ impl VideoDecoder {
             dec: Decoder::new()?,
             config: None,
         })
+    }
+
+    /// 取回重排缓冲里剩余的图像（流结束/停止时调用）
+    pub fn flush(&mut self) -> Vec<(Vec<u8>, u32, u32)> {
+        let mut out = Vec::new();
+        if let Ok(frames) = self.dec.flush_remaining() {
+            for yuv in frames {
+                let (w, h) = yuv.dimensions();
+                let stride = yuv.strides().0;
+                let y = yuv.y();
+                let luma = if stride == w {
+                    y[..w * h].to_vec()
+                } else {
+                    let mut buf = Vec::with_capacity(w * h);
+                    for row in 0..h {
+                        buf.extend_from_slice(&y[row * stride..row * stride + w]);
+                    }
+                    buf
+                };
+                out.push((luma, w as u32, h as u32));
+            }
+        }
+        out
     }
 
     /// 喂入一个视频单元，若解出图像则返回 (luma, width, height)
@@ -42,7 +65,8 @@ impl VideoDecoder {
         };
         let packet: &[u8] = combined.as_deref().unwrap_or(nalu);
 
-        let Some(yuv) = self.dec.decode(packet)? else {
+        let opts = DecodeOptions::new().flush_after_decode(Flush::NoFlush);
+        let Some(yuv) = self.dec.decode_with_options(packet, opts)? else {
             return Ok(None);
         };
         let (w, h) = yuv.dimensions();

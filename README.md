@@ -20,11 +20,13 @@
 
 ## 功能
 
-- HTTP-FLV 低延迟拉流（FLV + AVC + 原画，多 CDN 候选容灾）
+- HTTP-FLV 低延迟拉流（FLV + AVC + 原画，多 CDN 候选容灾），FLV 不可用时回退 HLS(TS)
 - 二维码识别（rxing / ZXing）
 - 官服扫码登录 + 抢码（passport `scan/confirm`）
 - B站扫码登录（保存拉流凭证 cookie）
-- 抖音直播流
+- 抖音直播流（a_bogus 签名 + 原画优先多 CDN；API 失败自动回退页面内嵌数据；HLS 回退）
+  - Cookie 过期可在 GUI「运行环境 → 抖音 Cookie → 设置」里粘贴覆盖，也可用
+    `MHYSCAN_DOUYIN_COOKIE` 或 `Config/douyin_cookie.txt`
 - 多账号/单账号抢码、连接预热
 - 匿名遥测（可关闭，自建 Cloudflare Worker + D1）
 - 可选 Tauri 桌面端（`tauri-app/`，HTML 设计稿）
@@ -58,7 +60,7 @@ mhyscan help
 示例：
 ```bash
 mhyscan scan 6                       # B站 RID=6，默认 180s
-mhyscan scan 6 --platform douyin     # 抖音
+mhyscan scan 123456 --platform douyin  # 抖音：填 live.douyin.com/<web_rid> 里的 web_rid
 mhyscan scan 6 --timeout 600
 ```
 
@@ -72,11 +74,19 @@ mhyscan scan 6 --timeout 600
 | `MHYSCAN_TELEMETRY_AUTH` / `_KEY` | HMAC / AES 密钥 | — |
 | `MHYSCAN_TELEMETRY_INTERVAL` | 定时上报间隔(s) | `300` |
 | `MHYSCAN_TELEMETRY=0` / `DO_NOT_TRACK=1` | 关闭遥测 | — |
+| `MHYSCAN_CONFIG_DIR` | 配置目录（install_id / spool 存放位置） | 平台标准目录 |
 | `MHYSCAN_DEBUG` | 调试日志 | 关 |
 
 ## 遥测后端（自建）
 
-`server/` 为 Cloudflare Worker + D1：`/collect` 接收（HMAC + AES-256-GCM + gzip）、每日 Cron 聚合与 90 天清理。见 `docs/telemetry-events.md`。
+`server/` 为 Cloudflare Worker + D1（RESTful）：
+
+- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip，成功 202）
+- `GET /v1/health` 健康检查（含 D1 探测与版本/commit；异常返回 503）
+- `GET /v1/stats?days=1..365` 聚合概览（可选 `STATS_TOKEN` 鉴权）
+- 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理
+
+CLI 与 GUI 都会在启动/定时/退出时上报（GUI 需带遥测环境变量启动）。见 `docs/telemetry-events.md`。
 
 部署：
 ```bash

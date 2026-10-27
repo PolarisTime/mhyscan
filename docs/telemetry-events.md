@@ -1,9 +1,13 @@
 # mhyscan 遥测事件数据字典
 
 - `schema_version`: **1**（只增字段不改语义；破坏性变更才升版本）
+- 上报接口：`POST /v1/events`
 - 上报格式：`nonce(12B) || AES-256-GCM( gzip( JSON ) )`，body 为单个事件对象或事件数组
 - 鉴权：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
-- 传输：`application/octet-stream`
+- 请求头：`Content-Type: application/octet-stream`、`Accept: application/json`
+- 成功响应：`202 Accepted`，body `{ "accepted": n, "rejected": n }`
+- 错误响应：RFC 9457 `application/problem+json`（`type/title/status/detail/instance`）
+- 状态码：401 签名/时钟、400 解密/解压/JSON、413 体积、415 Content-Type、422 批量条数、503 依赖不可用
 
 ## 信封字段（每个事件都带）
 
@@ -25,16 +29,18 @@
 | `app_start` | `ui_mode` | string | `cli` / `gui` |
 | | `os` | string | `linux` / `windows` / `macos` |
 | | `arch` | string | `x86_64` / `aarch64` |
-| | `channel` | string | `exe` / `pip` / `source` |
+| | `channel` | string | `exe` / `source` |
 | `scan_result` | `platform` | string | `bili` / `douyin` |
 | | `success` | bool | 是否抢码成功（失败时记此事件） |
 | | `attempt_count` | int | 本次识别尝试次数 |
 | | `detect_latency_ms` | int | 从启动到识别耗时(ms) |
 | `scan_success` | `platform` | string | `bili` / `douyin` |
-| | `rid` | string | 直播间号（公开数据） |
-| | `uid_hash` | string | 游戏 UID 的服务端/客户端 HMAC（可空） |
-| | `game_biz` / `region` | string | 如 `hk4e_cn` / `cn_gf01` |
-| | `attempt_count` / `detect_latency_ms` | int | 同上 |
+| | `success` | bool | 恒为 `true`（失败走 `scan_result`） |
+| | `attempt_count` | int | 本次识别尝试次数 |
+| | `detect_latency_ms` | int | 从启动到识别耗时(ms) |
+
+> 说明：`rid` / `uid_hash` / `game_biz` / `region` **当前不采集**（隐私优先，仅保留平台与耗时）。
+> 服务端 `scan_success` 表只为 `scan_success` 事件写入，`scan_result`（失败）只进 `events` 表。
 | `error` | `exc_type` | string | 异常类型名（**不含堆栈明文**） |
 
 ## 服务端表
@@ -44,6 +50,8 @@
 | `events` | 原始事件（含 `props`、`ip_prefix`） | 90 天（Cron 清理） |
 | `scan_success` | 抢码成功/尝试记录（便于聚合） | 长期 |
 | `daily_stats` | 按天 × 事件聚合（`installs`,`total`） | 长期 |
+| `GET /v1/health` | 健康检查：`status/version/commit/time/checks.db/runtime.colo`，依赖异常返回 503 | — |
+| `GET /v1/stats?days=1..365` | 聚合概览；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
 
 ## 隐私约束（禁止上报）
 
