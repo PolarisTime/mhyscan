@@ -75,14 +75,11 @@ export default {
     const path = url.pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
 
-    // 资源 → 允许的方法（旧路径保留为别名，兼容已发布客户端）
+    // 资源 → 允许的方法（仅 /v1，无兼容别名）
     const routes: Record<string, string[]> = {
       [`${BASE}/events`]: ["POST"],
       [`${BASE}/health`]: ["GET", "HEAD"],
       [`${BASE}/stats`]: ["GET", "HEAD"],
-      "/collect": ["POST"],
-      "/health": ["GET", "HEAD"],
-      "/stats": ["GET", "HEAD"],
     };
 
     if (path === "/" && method === "GET") return index();
@@ -96,8 +93,8 @@ export default {
       return problem(405, "Method Not Allowed", undefined, path, allowHeader(allow));
     }
 
-    if (path.endsWith("/health")) return health(request, env);
-    if (path.endsWith("/events") || path === "/collect") {
+    if (path === `${BASE}/health`) return health(request, env);
+    if (path === `${BASE}/events`) {
       const ct = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
       if (ct !== "application/octet-stream") {
         return problem(415, "Unsupported Media Type", "Content-Type 必须为 application/octet-stream", path);

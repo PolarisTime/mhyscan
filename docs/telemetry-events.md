@@ -1,7 +1,7 @@
 # mhyscan 遥测事件数据字典
 
 - `schema_version`: **1**（只增字段不改语义；破坏性变更才升版本）
-- 上报接口：`POST /v1/events`（旧路径 `/collect` 保留为别名，兼容已发布客户端）
+- 上报接口：`POST /v1/events`
 - 上报格式：`nonce(12B) || AES-256-GCM( gzip( JSON ) )`，body 为单个事件对象或事件数组
 - 鉴权：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
 - 请求头：`Content-Type: application/octet-stream`、`Accept: application/json`

@@ -81,7 +81,7 @@ mhyscan scan 6 --timeout 600
 
 `server/` 为 Cloudflare Worker + D1（RESTful）：
 
-- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip，成功 202；`/collect` 为兼容别名）
+- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip，成功 202）
 - `GET /v1/health` 健康检查（含 D1 探测与版本/commit；异常返回 503）
 - `GET /v1/stats?days=1..365` 聚合概览（可选 `STATS_TOKEN` 鉴权）
 - 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理

@@ -434,7 +434,7 @@
   <div class="brand">
     <div class="mark">M</div>
     <div class="brand-name">mhyscan</div>
-    <span class="ver" id="ver-chip">v0.1.0</span>
+    <span class="ver" id="ver-chip">v0.2.0</span>
     <span class="demo-badge">DEMO</span>
   </div>
   <div class="sep"></div>
@@ -1340,6 +1340,13 @@ async function wire() {
   await listen("login-qr", (e) => onQr(e.payload));
   await listen("login-qr-text", (e) => console.debug("qr text", e.payload));
   await listen("login-status", (e) => onLoginStatus(e.payload));
+  try {
+    // 版本号以 Tauri 应用版本为准
+    const v = await TAURI.app.getVersion();
+    if (v) $("ver-chip").textContent = `v${v}`;
+  } catch (e) {
+    // 旧运行时无 getVersion 时保留静态值
+  }
   await listen("login-done", (e) => onLoginDone(e.payload));
   await loadAccounts();
   try {
