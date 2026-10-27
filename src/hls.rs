@@ -25,6 +25,7 @@ pub struct HlsSession {
     queue: VecDeque<String>,
     last_refresh: Option<Instant>,
     bytes_read: u64,
+    demux: TsDemuxer,
 }
 
 impl HlsSession {
@@ -39,6 +40,7 @@ impl HlsSession {
             queue: VecDeque::new(),
             last_refresh: None,
             bytes_read: 0,
+            demux: TsDemuxer::new(),
         }
     }
 
@@ -54,7 +56,7 @@ impl HlsSession {
                 let data = self.fetch_bytes(&seg).await?;
                 self.bytes_read += data.len() as u64;
                 let mut units = Vec::new();
-                demux_ts(&data, &mut units);
+                self.demux.push(&data, &mut units);
                 if !units.is_empty() {
                     return Ok(units);
                 }
@@ -195,43 +197,209 @@ pub fn resolve_url(base: &str, rel: &str) -> String {
     format!("{origin}{dir}{rel}")
 }
 
-/// 解 TS：PAT → PMT → 视频 PES → Annex-B H.264
-pub fn demux_ts(data: &[u8], out: &mut Vec<VideoUnit>) {
-    let mut pmt_pid: Option<u16> = None;
-    let mut video_pid: Option<u16> = None;
-    let mut pes: Vec<u8> = Vec::new();
+/// TS 解复用器：跨 PES 包重组视频 elementary stream，按 NAL/AU 边界切分。
+///
+/// 关键点：H.264 的一帧可能跨多个 PES 包，不能按 PES 直接切；必须先拼成
+/// 连续的 ES，再按起始码分 NAL，最后按「first_mb_in_slice == 0」或 AUD 分帧。
+#[derive(Default)]
+pub struct TsDemuxer {
+    pmt_pid: Option<u16>,
+    video_pid: Option<u16>,
+    es: Vec<u8>,
+    au: Vec<Vec<u8>>,
+    /// 当前 PES 还剩多少 ES 字节（用于裁掉 TS 包尾 0xFF 填充）
+    pes_remaining: Option<usize>,
+}
 
-    for packet in data.chunks_exact(188) {
-        if packet[0] != 0x47 {
-            continue;
-        }
-        let pusi = packet[1] & 0x40 != 0;
-        let pid = (((packet[1] & 0x1f) as u16) << 8) | packet[2] as u16;
-        let afc = (packet[3] >> 4) & 0x3;
-        let mut off = 4usize;
-        if afc & 0x2 != 0 {
-            if off >= packet.len() {
+impl TsDemuxer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, data: &[u8], out: &mut Vec<VideoUnit>) {
+        for packet in data.chunks_exact(188) {
+            if packet[0] != 0x47 {
                 continue;
             }
-            off = 5 + packet[off] as usize;
-        }
-        if afc & 0x1 == 0 || off >= packet.len() {
-            continue;
-        }
-        let payload = &packet[off..];
-
-        if pid == 0 && pusi {
-            pmt_pid = parse_pat(payload);
-        } else if Some(pid) == pmt_pid && pusi {
-            video_pid = parse_pmt(payload);
-        } else if Some(pid) == video_pid {
-            if pusi && !pes.is_empty() {
-                flush_pes(&mut pes, out);
+            let pusi = packet[1] & 0x40 != 0;
+            let pid = (((packet[1] & 0x1f) as u16) << 8) | packet[2] as u16;
+            let afc = (packet[3] >> 4) & 0x3;
+            let mut off = 4usize;
+            if afc & 0x2 != 0 {
+                if off >= packet.len() {
+                    continue;
+                }
+                off = 5 + packet[off] as usize;
             }
-            pes.extend_from_slice(payload);
+            if afc & 0x1 == 0 || off >= packet.len() {
+                continue;
+            }
+            let payload = &packet[off..];
+
+            if pid == 0 && pusi {
+                self.pmt_pid = parse_pat(payload);
+            } else if Some(pid) == self.pmt_pid && pusi {
+                self.video_pid = parse_pmt(payload);
+            } else if Some(pid) == self.video_pid {
+                // 新 PES 起点：跳过 PES 头，把后续 ES 接到之前的 ES 缓冲上
+                // （一帧可能横跨多个 PES 包）
+                if pusi {
+                    match pes_es_start(payload) {
+                        Some(es_start) => {
+                            let rest = &payload[es_start..];
+                            let pes_len = pes_total_len(payload);
+                            let take = match pes_len {
+                                Some(total) => rest.len().min(total.saturating_sub(es_start)),
+                                None => rest.len(),
+                            };
+                            self.es.extend_from_slice(&rest[..take]);
+                            self.pes_remaining = pes_len.map(|t| t.saturating_sub(es_start + take));
+                        }
+                        None => {
+                            self.es.extend_from_slice(payload);
+                            self.pes_remaining = None;
+                        }
+                    }
+                } else {
+                    let take = match self.pes_remaining {
+                        Some(rem) => payload.len().min(rem),
+                        None => payload.len(),
+                    };
+                    self.es.extend_from_slice(&payload[..take]);
+                    if let Some(rem) = self.pes_remaining.as_mut() {
+                        *rem = rem.saturating_sub(take);
+                    }
+                }
+                self.drain_nalus(out);
+            }
+        }
+        self.drain_nalus(out);
+    }
+
+    /// 流结束时吐出最后一帧
+    pub fn finish(&mut self, out: &mut Vec<VideoUnit>) {
+        self.drain_nalus(out);
+        // 末尾 NAL 后面没有起始码，单独取出
+        if let Some((start, sc_len)) = find_start_code(&self.es, 0) {
+            if start <= 3 && self.es.len() > sc_len {
+                let nal = self.es[sc_len..].to_vec();
+                self.push_nal(nal, out);
+            }
+        }
+        if self.au.iter().any(|n| is_vcl(n)) {
+            self.flush_au(out);
+        }
+        self.es.clear();
+        self.pes_remaining = None;
+    }
+
+    /// 从 ES 缓冲里切出完整 NAL，并按 AU 分组
+    fn drain_nalus(&mut self, out: &mut Vec<VideoUnit>) {
+        loop {
+            let Some((start, sc_len)) = find_start_code(&self.es, 0) else {
+                if self.es.len() > 4 {
+                    // 保留最多 3 字节可能的起始码前缀
+                    let keep = self.es.len().min(3);
+                    let cut = self.es.len() - keep;
+                    self.es.drain(..cut);
+                }
+                return;
+            };
+            if start > 0 {
+                self.es.drain(..start);
+            }
+            let Some((next, _)) = find_start_code(&self.es, sc_len) else {
+                return; // 下一个 NAL 还没到齐
+            };
+            let nal: Vec<u8> = self.es[sc_len..next].to_vec();
+            self.es.drain(..next);
+            self.push_nal(nal, out);
         }
     }
-    flush_pes(&mut pes, out);
+
+    fn push_nal(&mut self, nal: Vec<u8>, out: &mut Vec<VideoUnit>) {
+        let nal_type = nal.first().map(|b| b & 0x1f).unwrap_or(0);
+        match nal_type {
+            7 | 8 => {
+                // 参数集属于下一个 AU
+                if self.au.iter().any(|n| is_vcl(n)) {
+                    self.flush_au(out);
+                }
+                self.au.push(nal);
+            }
+            9 => {
+                if !self.au.is_empty() {
+                    self.flush_au(out);
+                }
+                self.au.push(nal);
+            }
+            1 | 5 => {
+                let first_mb_zero = first_mb_in_slice(&nal) == Some(0);
+                if first_mb_zero && self.au.iter().any(|n| is_vcl(n)) {
+                    self.flush_au(out);
+                }
+                self.au.push(nal);
+            }
+            _ => self.au.push(nal),
+        }
+    }
+
+    fn flush_au(&mut self, out: &mut Vec<VideoUnit>) {
+        if self.au.is_empty() {
+            return;
+        }
+        let mut buf = Vec::with_capacity(self.au.iter().map(Vec::len).sum::<usize>() + 16);
+        for nal in self.au.drain(..) {
+            buf.extend_from_slice(&[0, 0, 0, 1]);
+            buf.extend_from_slice(&nal);
+        }
+        out.push(VideoUnit::Nalu(buf));
+    }
+}
+
+/// 兼容旧接口：一次性喂完并 flush
+pub fn demux_ts(data: &[u8], out: &mut Vec<VideoUnit>) {
+    let mut d = TsDemuxer::new();
+    d.push(data, out);
+    d.finish(out);
+}
+
+fn is_vcl(nal: &[u8]) -> bool {
+    matches!(nal.first().map(|b| b & 0x1f), Some(1) | Some(5))
+}
+
+/// 找起始码，返回 (起始码位置, 长度)
+fn find_start_code(buf: &[u8], from: usize) -> Option<(usize, usize)> {
+    let mut i = from;
+    while i + 3 <= buf.len() {
+        if buf[i] == 0 && buf[i + 1] == 0 {
+            if buf[i + 2] == 1 {
+                return Some((i, 3));
+            }
+            if i + 4 <= buf.len() && buf[i + 2] == 0 && buf[i + 3] == 1 {
+                return Some((i, 4));
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// PES 总长度（6 + PES_packet_length；0 表示无界）
+fn pes_total_len(buf: &[u8]) -> Option<usize> {
+    if buf.len() < 8 {
+        return None;
+    }
+    let len = ((buf[4] as usize) << 8) | buf[5] as usize;
+    if len == 0 { None } else { Some(6 + len) }
+}
+
+/// PES 头长度（返回 ES 数据偏移）
+fn pes_es_start(buf: &[u8]) -> Option<usize> {
+    if buf.len() < 9 || buf[0] != 0 || buf[1] != 0 || buf[2] != 1 {
+        return None;
+    }
+    Some(9 + buf[8] as usize)
 }
 
 fn parse_pat(payload: &[u8]) -> Option<u16> {
@@ -239,9 +407,7 @@ fn parse_pat(payload: &[u8]) -> Option<u16> {
     if sec.first() != Some(&0x00) || sec.len() < 12 {
         return None;
     }
-    // 跳过 5 字节表头，取第一个 program 的 PMT PID
-    let pid = (((sec[10] & 0x1f) as u16) << 8) | sec[11] as u16;
-    Some(pid)
+    Some((((sec[10] & 0x1f) as u16) << 8) | sec[11] as u16)
 }
 
 fn parse_pmt(payload: &[u8]) -> Option<u16> {
@@ -263,7 +429,6 @@ fn parse_pmt(payload: &[u8]) -> Option<u16> {
     None
 }
 
-/// 去掉 pointer_field，返回 section（含 table_id）
 fn section(payload: &[u8]) -> Option<&[u8]> {
     if payload.is_empty() {
         return None;
@@ -281,25 +446,35 @@ fn section(payload: &[u8]) -> Option<&[u8]> {
     Some(&sec[..end])
 }
 
-fn flush_pes(pes: &mut Vec<u8>, out: &mut Vec<VideoUnit>) {
-    if pes.len() > 9 && pes[0] == 0 && pes[1] == 0 && pes[2] == 1 {
-        let pes_len = ((pes[4] as usize) << 8) | pes[5] as usize;
-        let total = 6 + pes_len;
-        let buf: &[u8] = if pes_len > 0 && pes.len() >= total {
-            &pes[..total]
-        } else {
-            &pes
-        };
-        let header_len = buf[8] as usize;
-        let es_start = 9 + header_len;
-        if es_start < buf.len() {
-            let es = &buf[es_start..];
-            if es.windows(3).any(|w| w == [0, 0, 1]) {
-                out.push(VideoUnit::Nalu(es.to_vec()));
-            }
+/// 解析 slice header 的第一个 ue(v)：first_mb_in_slice
+fn first_mb_in_slice(nal: &[u8]) -> Option<u32> {
+    let bits = nal.get(1..)?;
+    if bits.is_empty() {
+        return None;
+    }
+    let bit = |i: usize| -> u32 { ((bits[i / 8] >> (7 - (i % 8))) & 1) as u32 };
+    let mut pos = 0usize;
+    let mut zeros = 0usize;
+    while pos < bits.len() * 8 && bit(pos) == 0 {
+        zeros += 1;
+        pos += 1;
+        if zeros > 24 {
+            return None;
         }
     }
-    pes.clear();
+    if pos >= bits.len() * 8 {
+        return None;
+    }
+    pos += 1;
+    let mut v = 0u32;
+    for _ in 0..zeros {
+        if pos >= bits.len() * 8 {
+            return None;
+        }
+        v = (v << 1) | bit(pos);
+        pos += 1;
+    }
+    Some((1u32 << zeros) - 1 + v)
 }
 
 #[cfg(test)]
