@@ -1,417 +1,1297 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>mhyscan - 极速控制台</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-  <script>
-    tailwind.config = { theme: { extend: { fontFamily: { mono: ['JetBrains Mono','Fira Code','Menlo','Consolas','monospace'] } } } }
-  </script>
-  <style>
-    ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<title>mhyscan</title>
+<style>
+  /* ============================================================
+     mhyscan console — dark instrument theme
+     graphite neutrals + single mint accent, no external assets
+     ============================================================ */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0a0b;
+    --bg-inset: #080809;
+    --panel: #111214;
+    --panel-2: #16171a;
+    --panel-3: #1c1e22;
+    --panel-4: #24272c;
+    --line: #232529;
+    --line-soft: #1a1c20;
+    --line-strong: #30343b;
+    --text: #f2f3f5;
+    --text-2: #a7abb3;
+    --text-3: #6f747d;
+    --accent: #3ddc97;
+    --accent-ink: #04150e;
+    --accent-soft: rgba(61, 220, 151, 0.12);
+    --warn: #f0b24a;
+    --warn-soft: rgba(240, 178, 74, 0.12);
+    --err: #ff6b6b;
+    --err-soft: rgba(255, 107, 107, 0.12);
+    --info: #6ba8ff;
+    --info-soft: rgba(107, 168, 255, 0.12);
+    --qr: #c084fc;
+    --qr-soft: rgba(192, 132, 252, 0.12);
+    --r-lg: 12px;
+    --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --shadow-card: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+    --shadow-pop: 0 18px 48px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 12.5px/1.5 var(--sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+    user-select: none;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(900px 320px at 18% -12%, rgba(61, 220, 151, 0.07), transparent 62%),
+      radial-gradient(700px 300px at 92% -18%, rgba(107, 168, 255, 0.05), transparent 60%);
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+  button:focus-visible, input:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid rgba(61, 220, 151, 0.55);
+    outline-offset: 1px;
+  }
+  .icon { width: 14px; height: 14px; flex: none; display: block; }
+  .icon-lg { width: 16px; height: 16px; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2d33; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3e46; background-clip: content-box; }
+
+  /* ============================== topbar ============================== */
+  .topbar {
+    height: 46px; display: flex; align-items: center; gap: 12px;
+    padding: 0 14px; border-bottom: 1px solid var(--line-soft);
+    background: rgba(14, 15, 17, 0.72); position: relative; z-index: 2;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .mark {
+    width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center;
+    background: linear-gradient(145deg, #56f0b4, #1fae7c); color: var(--accent-ink);
+    font-weight: 800; font-size: 12px; letter-spacing: -0.02em;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 4px 14px rgba(61, 220, 151, 0.22);
+  }
+  .brand-name { font-weight: 650; letter-spacing: -0.01em; font-size: 13px; }
+  .ver {
+    font-family: var(--mono); font-size: 10px; color: var(--text-3);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; background: var(--panel);
+  }
+  .demo-badge {
+    display: none; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em;
+    color: var(--warn); border: 1px solid rgba(240, 178, 74, 0.35);
+    background: var(--warn-soft); border-radius: 999px; padding: 1px 7px;
+  }
+  body.is-demo .demo-badge { display: inline-block; }
+  .topbar .grow { flex: 1; }
+  .sep { width: 1px; height: 16px; background: var(--line); flex: none; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2);
+    color: var(--text-2); font-size: 11.5px; white-space: nowrap;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); flex: none; transition: background 0.15s; }
+  .pill[data-state="live"] { color: var(--text); border-color: rgba(61, 220, 151, 0.3); background: rgba(61, 220, 151, 0.07); }
+  .pill[data-state="live"] .dot { background: var(--accent); box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.16); animation: pulse 1.8s ease-in-out infinite; }
+  .pill[data-state="busy"] { color: var(--text); border-color: rgba(240, 178, 74, 0.3); background: var(--warn-soft); }
+  .pill[data-state="busy"] .dot { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  .pill[data-state="error"] { color: #ffb3b3; border-color: rgba(255, 107, 107, 0.3); background: var(--err-soft); }
+  .pill[data-state="error"] .dot { background: var(--err); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .metric { display: inline-flex; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+  .metric b { font-family: var(--mono); font-weight: 600; font-size: 11.5px; color: var(--text); letter-spacing: 0.01em; }
+  .metric b.dim { color: var(--text-3); font-weight: 500; }
+
+  .account-btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px 0 8px;
+    border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2);
+    color: var(--text-2); font-size: 11.5px; max-width: 240px;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+  }
+  .account-btn:hover { border-color: var(--line-strong); color: var(--text); background: var(--panel-3); }
+  .account-btn .avatar-xs {
+    width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--panel-4); color: var(--text-2); font-size: 9.5px; font-weight: 700;
+  }
+  .account-btn.is-bound .avatar-xs { background: var(--accent-soft); color: var(--accent); }
+  .account-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ============================== workspace ============================== */
+  .workspace {
+    display: grid; grid-template-columns: 292px minmax(0, 1fr);
+    gap: 12px; padding: 12px; height: calc(100% - 46px); min-height: 0;
+  }
+  .rail { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .rail-scroll { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; overflow-y: auto; padding-right: 1px; }
+  .rail-action { flex: none; }
+  .step { display: flex; gap: 8px; align-items: flex-start; }
+  .step-n {
+    width: 16px; height: 16px; border-radius: 50%; flex: none; display: grid; place-items: center;
+    background: var(--panel-3); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 9px; color: var(--text-2); margin-top: 1px;
+  }
+  .step b { display: block; font-size: 11px; font-weight: 600; color: var(--text-2); }
+  .step span { font-size: 10px; color: var(--text-3); }
+
+  .card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 42%), var(--panel);
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: var(--shadow-card); min-width: 0;
+  }
+  .card-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+  .card-t { font-size: 10.5px; font-weight: 650; letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-3); }
+  .card-b { padding: 12px; }
+
+  .acct { display: flex; align-items: center; gap: 10px; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 11px; flex: none; display: grid; place-items: center;
+    background: var(--panel-3); border: 1px solid var(--line);
+    color: var(--text-2); font-weight: 700; font-size: 14px;
+  }
+  .acct-main { min-width: 0; flex: 1; }
+  .acct-name { font-weight: 600; font-size: 12.5px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .acct-sub { font-family: var(--mono); font-size: 10px; color: var(--text-3); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag {
+    flex: none; font-size: 9.5px; padding: 1px 6px; border-radius: 5px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text-2);
+  }
+  .tag.accent { color: var(--accent); border-color: rgba(61, 220, 151, 0.28); background: var(--accent-soft); }
+
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; padding: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; }
+  .seg button {
+    height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center; gap: 6px;
+    font-size: 11.5px; color: var(--text-3); transition: background 0.14s, color 0.14s;
+  }
+  .seg button:hover { color: var(--text-2); }
+  .seg button.on { background: var(--panel-4); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); }
+  .seg button.on .icon { color: var(--accent); }
+
+  .field { position: relative; }
+  .input {
+    width: 100%; height: 34px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 0 52px 0 10px; color: var(--text);
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.02em; outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  }
+  .input::placeholder { color: var(--text-3); }
+  .input:hover { border-color: var(--line-strong); }
+  .input:focus { border-color: rgba(61, 220, 151, 0.5); box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.1); background: var(--bg-inset); }
+  .suffix {
+    position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.09em;
+    color: var(--accent); background: var(--accent-soft);
+    border: 1px solid rgba(61, 220, 151, 0.24); border-radius: 4px; padding: 1px 5px; pointer-events: none;
+  }
+  .hint { font-size: 10.5px; color: var(--text-3); }
+
+  .kv { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 11.5px; }
+  .kv .k { color: var(--text-3); display: inline-flex; align-items: center; gap: 7px; }
+  .kv .v { font-family: var(--mono); font-size: 11px; color: var(--text-2); text-align: right; }
+  .kv .v.ok { color: var(--accent); }
+  .kv .v.warn { color: var(--warn); }
+
+  .btn-primary {
+    width: 100%; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    background: linear-gradient(180deg, #4ce9a8, #2cc78c);
+    color: var(--accent-ink); font-weight: 700; font-size: 12.5px; letter-spacing: 0.01em;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 8px 24px rgba(61, 220, 151, 0.16);
+    transition: filter 0.15s, transform 0.06s;
+  }
+  .btn-primary:hover { filter: brightness(1.05); }
+  .btn-primary:active { transform: translateY(1px); }
+  .btn-primary.is-stop {
+    background: linear-gradient(180deg, #ff8080, #e75555); color: #1c0606;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 24px rgba(255, 107, 107, 0.14);
+  }
+  .btn-primary.is-busy { opacity: 0.55; pointer-events: none; }
+  .action-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 10.5px; color: var(--text-3); }
+  kbd {
+    font-family: var(--mono); font-size: 9.5px; color: var(--text-2);
+    border: 1px solid var(--line); border-bottom-color: var(--line-strong);
+    background: var(--panel-2); border-radius: 4px; padding: 0 4px; line-height: 15px;
+  }
+
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text-2);
+    font-size: 11px; white-space: nowrap; transition: border-color 0.14s, color 0.14s, background 0.14s;
+  }
+  .btn-ghost:hover { border-color: var(--line-strong); color: var(--text); background: var(--panel-3); }
+  .btn-ghost.icon-only { width: 26px; padding: 0; justify-content: center; }
+  .btn-ghost.accent { color: var(--accent); border-color: rgba(61, 220, 151, 0.28); background: var(--accent-soft); }
+  .btn-ghost.accent:hover { background: rgba(61, 220, 151, 0.18); border-color: rgba(61, 220, 151, 0.4); }
+
+  /* ============================== main ============================== */
+  .main { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; flex: none; }
+  .stat {
+    display: flex; align-items: center; gap: 10px; padding: 11px 12px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 50%), var(--panel);
+    border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-card);
+    min-width: 0; transition: border-color 0.15s;
+  }
+  .stat:hover { border-color: var(--line-strong); }
+  .stat .ico {
+    width: 32px; height: 32px; border-radius: 9px; flex: none; display: grid; place-items: center;
+    background: var(--panel-3); border: 1px solid var(--line); color: var(--text-2);
+  }
+  .stat .body { min-width: 0; }
+  .stat .lbl { font-size: 9.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+  .stat .val { font-family: var(--mono); font-size: 18.5px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.5; padding-bottom: 1px; margin-top: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat .sub { font-size: 10px; color: var(--text-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stat[data-tone="live"] .ico { color: var(--accent); border-color: rgba(61, 220, 151, 0.28); background: var(--accent-soft); }
+  .stat[data-tone="live"] .val { color: var(--accent); }
+  .stat[data-tone="busy"] .ico { color: var(--warn); border-color: rgba(240, 178, 74, 0.28); background: var(--warn-soft); }
+  .stat[data-tone="busy"] .val { color: var(--warn); }
+  .stat[data-tone="error"] .ico { color: var(--err); border-color: rgba(255, 107, 107, 0.28); background: var(--err-soft); }
+  .stat[data-tone="error"] .val { color: var(--err); }
+
+  .feed { display: flex; flex-direction: column; height: 208px; flex: none; overflow: hidden; }
+  .feed-body { flex: 1; overflow-y: auto; padding: 4px 6px 6px; }
+  .qr-row {
+    display: grid; grid-template-columns: 62px minmax(0, 1fr) auto auto auto;
+    gap: 10px; align-items: center; padding: 5px 7px; border-radius: 7px; font-size: 11.5px;
+    transition: background 0.12s;
+  }
+  .qr-row:hover { background: rgba(255, 255, 255, 0.025); }
+  .qr-row .t { font-family: var(--mono); font-size: 10px; color: var(--text-3); }
+  .qr-row .tk { font-family: var(--mono); font-size: 11.5px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qr-row .meta { font-family: var(--mono); font-size: 10px; color: var(--text-3); white-space: nowrap; }
+  .qr-row .who { font-size: 10.5px; font-weight: 600; white-space: nowrap; color: var(--text-2); }
+  .qr-row .who.ok { color: var(--accent); }
+  .badge {
+    display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 6px; border-radius: 5px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    font-family: var(--mono); font-size: 9.5px; color: var(--text-3);
+  }
+  .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; color: var(--text-3); font-size: 11.5px; }
+  .empty .icon { width: 20px; height: 20px; opacity: 0.55; }
+  .empty small { font-size: 10px; color: #5b5f67; }
+
+  .logs { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; position: relative; }
+  .logs-head { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); flex: none; }
+  .tabs { display: flex; gap: 2px; padding: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; flex: none; }
+  .tabs button { height: 23px; padding: 0 8px; border-radius: 6px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-3); transition: background 0.12s, color 0.12s; }
+  .tabs button:hover { color: var(--text-2); }
+  .tabs button.on { background: var(--panel-4); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+  .tabs button[data-cat="STREAM"].on { color: var(--info); }
+  .tabs button[data-cat="QR"].on { color: var(--qr); }
+  .tabs button[data-cat="LOGIN"].on { color: var(--accent); }
+  .tabs button[data-cat="ERROR"].on { color: var(--err); }
+  .logs-head .grow { flex: 1; }
+  .search { position: relative; display: flex; align-items: center; }
+  .search .icon { position: absolute; left: 8px; width: 12px; height: 12px; color: var(--text-3); pointer-events: none; }
+  .search input {
+    width: 156px; height: 26px; padding: 0 8px 0 25px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
+    color: var(--text); font-size: 11px; outline: none; transition: border-color 0.15s, width 0.15s;
+  }
+  .search input::placeholder { color: var(--text-3); }
+  .search input:focus { border-color: rgba(61, 220, 151, 0.45); }
+
+  .logs-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px 10px;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.65; user-select: text;
+  }
+  .ln { display: grid; grid-template-columns: 62px 52px minmax(0, 1fr); gap: 8px; padding: 0 4px; border-radius: 4px; align-items: start; }
+  .ln:hover { background: rgba(255, 255, 255, 0.028); }
+  .ln .t { font-size: 10px; color: #5f646d; padding-top: 1px; }
+  .cat {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-align: center;
+    line-height: 15px; border-radius: 3px; margin-top: 1px; color: var(--text-3); background: rgba(255, 255, 255, 0.045);
+    align-self: start;
+  }
+  .cat.STREAM { color: #8fb9ff; background: var(--info-soft); }
+  .cat.QR { color: #d3adff; background: var(--qr-soft); }
+  .cat.LOGIN { color: var(--accent); background: var(--accent-soft); }
+  .cat.ERROR { color: #ff9a9a; background: var(--err-soft); }
+  .msg { color: #d7d9de; white-space: pre-wrap; word-break: break-word; }
+  .ln.err .msg { color: #ffb4b4; }
+
+  .to-bottom {
+    position: absolute; right: 14px; bottom: 12px;
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 26px; padding: 0 10px; border-radius: 999px;
+    background: var(--panel-4); border: 1px solid var(--line-strong);
+    color: var(--text-2); font-size: 10.5px; box-shadow: var(--shadow-pop);
+    opacity: 0; pointer-events: none; transform: translateY(4px);
+    transition: opacity 0.15s, transform 0.15s;
+  }
+  .to-bottom.show { opacity: 1; pointer-events: auto; transform: none; }
+
+  /* ============================== dialog ============================== */
+  .overlay {
+    position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
+    background: rgba(5, 6, 7, 0.68); backdrop-filter: blur(8px);
+    opacity: 0; pointer-events: none; transition: opacity 0.18s;
+  }
+  .overlay.show { opacity: 1; pointer-events: auto; }
+  .dialog {
+    width: 352px; max-width: calc(100vw - 32px); background: var(--panel);
+    border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow-pop);
+    overflow: hidden; transform: scale(0.97) translateY(6px); transition: transform 0.18s;
+  }
+  .overlay.show .dialog { transform: none; }
+  .dialog-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line-soft); }
+  .dialog-h h3 { margin: 0; font-size: 12.5px; font-weight: 650; }
+  .dialog-h .x { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: var(--text-3); }
+  .dialog-h .x:hover { background: var(--panel-3); color: var(--text); }
+  .dialog-b { padding: 16px 16px 14px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .qr-box {
+    width: 184px; height: 184px; border-radius: 12px; border: 1px dashed var(--line-strong);
+    background: var(--panel-2); display: grid; place-items: center; overflow: hidden; position: relative;
+  }
+  .qr-box img { width: 100%; height: 100%; object-fit: contain; background: #fff; padding: 8px; display: none; }
+  .qr-box img.show { display: block; }
+  .qr-box .ph { display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-3); font-size: 10.5px; }
+  .qr-box .ph .icon { width: 26px; height: 26px; opacity: 0.5; }
+  .qr-box.loading .ph { display: none; }
+  .qr-box.loading::after {
+    content: ""; width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid rgba(61, 220, 151, 0.25); border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .dialog .hint-text { font-size: 11.5px; color: var(--text-2); text-align: center; min-height: 17px; }
+  .dialog .hint-sub { font-size: 10px; color: var(--text-3); text-align: center; }
+  .dialog-f { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line-soft); background: rgba(255, 255, 255, 0.012); }
+  .dialog-f .btn-ghost { flex: 1; height: 32px; justify-content: center; font-size: 11.5px; }
+  .dialog-f .btn-ghost.primary { color: var(--accent-ink); background: linear-gradient(180deg, #4ce9a8, #2cc78c); border-color: transparent; font-weight: 650; }
+  .dialog-f .btn-ghost.primary:hover { filter: brightness(1.05); background: linear-gradient(180deg, #4ce9a8, #2cc78c); }
+  .dialog-f .btn-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .toasts { position: fixed; right: 14px; bottom: 14px; z-index: 60; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+  .toast {
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 9px;
+    background: var(--panel-3); border: 1px solid var(--line-strong); box-shadow: var(--shadow-pop);
+    font-size: 11.5px; color: var(--text); animation: toast-in 0.18s ease-out;
+  }
+  .toast .icon { color: var(--accent); }
+  .toast.err .icon { color: var(--err); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+  @media (max-width: 1040px) {
+    .workspace { grid-template-columns: 264px minmax(0, 1fr); }
+    .search input { width: 120px; }
+  }
+</style>
 </head>
-<body class="bg-slate-100/90 text-slate-800 antialiased font-sans text-xs h-screen overflow-hidden flex flex-col select-none">
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.6v4.8l3.2 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4 3.8 8.2 12 12.4l8.2-4.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="m4 12.6 8 4.1 8-4.1M4 16.9l8 4.1 8-4.1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="14" y="4" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="4" y="14" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M14 14h2.6v2.6H14zM19.4 14v2.6M14 19.4h2.6M19.4 19.4h.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M3.5 9.2a13 13 0 0 1 17 0M6.6 12.4a8.6 8.6 0 0 1 10.8 0M9.7 15.6a4.2 4.2 0 0 1 4.6 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="19" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.4" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.8 19.4a7.2 7.2 0 0 1 14.4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 15H5.8A1.8 1.8 0 0 1 4 13.2V5.8A1.8 1.8 0 0 1 5.8 4h7.4A1.8 1.8 0 0 1 15 5.8v.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10m0 0 4-4m-4 4-4-4M5 18.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V5.5A1.5 1.5 0 0 1 11 4h2a1.5 1.5 0 0 1 1.5 1.5V7M6.5 7l.8 11.2A1.8 1.8 0 0 0 9.1 20h5.8a1.8 1.8 0 0 0 1.8-1.8L17.5 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-tv" viewBox="0 0 24 24"><rect x="3.5" y="6.5" width="17" height="11" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m9 4 3 2.5L15 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V7.2l9-2v10.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="6.8" cy="18" r="2.3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="15.8" cy="15.6" r="2.3" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4.5 13.5 7 5.5h10l2.5 8v4a1.8 1.8 0 0 1-1.8 1.8H6.3a1.8 1.8 0 0 1-1.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4.5 13.5H9l1.2 2h3.6l1.2-2h4.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4.5 21 20H3z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 9.5v4.2M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m7.5 10 3 2.4-3 2.4M12.8 15h3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v13m0 0 5-5m-5 5-5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13.2 3 5.8 13.4h5L10.8 21l7.4-10.4h-5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
 
-  <header class="h-9 bg-white border-b border-slate-200 px-3 flex items-center justify-between shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-    <div class="flex items-center gap-2">
-      <div class="w-5 h-5 rounded bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-[11px] shadow-xs">M</div>
-      <div class="flex items-center gap-1.5">
-        <span class="font-bold text-slate-900 tracking-tight text-xs">mhyscan</span>
-        <span class="bg-blue-50 text-blue-600 border border-blue-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-medium leading-4">v0.1.0</span>
-      </div>
-    </div>
-    <div class="flex items-center gap-3">
-      <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-50 border border-slate-200 text-[11px]">
-        <span id="global-indicator" class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-        <span id="global-status-text" class="text-slate-700 font-medium">就绪</span>
-      </div>
-      <div class="flex items-center gap-1 text-[11px] text-slate-500">
-        <span>延迟:</span><span id="ping-text" class="font-mono text-emerald-600 font-semibold">--</span>
-      </div>
-      <div class="h-3 w-[1px] bg-slate-200"></div>
-      <button onclick="openLoginModal()" class="text-slate-600 hover:text-blue-600 flex items-center gap-1 text-[11px] transition">
-        <i class="fa-regular fa-user-circle text-xs"></i><span id="nav-user-label">未绑定账号</span>
-      </button>
-    </div>
-  </header>
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">M</div>
+    <div class="brand-name">mhyscan</div>
+    <span class="ver" id="ver-chip">v0.1.0</span>
+    <span class="demo-badge">DEMO</span>
+  </div>
+  <div class="sep"></div>
+  <div class="pill" id="conn-pill" data-state="idle">
+    <span class="dot"></span><span id="conn-text">就绪</span>
+  </div>
+  <div class="metric">运行 <b id="m-runtime" class="mono">00:00:00</b></div>
+  <div class="metric">帧率 <b id="m-fps" class="mono dim">--</b></div>
+  <div class="grow"></div>
+  <button class="account-btn" id="account-btn" onclick="ui.openLogin('mihoyo')" title="账号与登录">
+    <span class="avatar-xs" id="account-avatar">?</span>
+    <span id="account-label">未绑定账号</span>
+  </button>
+</div>
 
-  <main class="flex-1 flex overflow-hidden p-2 gap-2">
-    <aside class="w-60 bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
-      <div class="p-2 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between">
-        <div class="flex items-center gap-1.5 min-w-0">
-          <div class="w-6 h-6 rounded-full bg-slate-200 border border-white shadow-xs flex items-center justify-center text-slate-500 shrink-0"><i class="fa-solid fa-user text-[10px]"></i></div>
-          <div class="min-w-0">
-            <div id="sidebar-account-name" class="font-semibold text-slate-800 text-[11px] leading-tight truncate">暂无账号绑定</div>
-            <div id="sidebar-account-sub" class="text-[9px] text-slate-400 leading-none mt-0.5">扫码极速登录</div>
+<div class="workspace">
+  <aside class="rail">
+    <div class="rail-scroll">
+    <section class="card">
+      <div class="card-h"><span class="card-t">账号</span><span class="badge" id="acct-count">0 个</span></div>
+      <div class="card-b">
+        <div class="acct">
+          <div class="avatar" id="acct-avatar">M</div>
+          <div class="acct-main">
+            <div class="acct-name" id="acct-name">未绑定米哈游账号</div>
+            <div class="acct-sub" id="acct-sub">扫码登录后自动抢码</div>
           </div>
+          <span class="tag accent" id="acct-type">官服</span>
         </div>
-        <button onclick="openLoginModal()" class="px-1.5 py-0.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50 rounded border border-blue-200 transition shrink-0">扫码登录</button>
-      </div>
-
-      <div class="p-2 space-y-2 flex-1 overflow-y-auto">
-        <div>
-          <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-0.5">直播平台</label>
-          <div class="relative">
-            <select id="platform-select" class="w-full bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-blue-500 rounded py-1 px-2 text-xs appearance-none outline-none transition pr-6">
-              <option value="bili">哔哩哔哩 (B站)</option>
-              <option value="douyin">抖音直播</option>
-            </select>
-            <i class="fa-solid fa-chevron-down absolute right-2 top-2 text-[9px] text-slate-400 pointer-events-none"></i>
-          </div>
-        </div>
-        <div>
-          <div class="flex justify-between items-center mb-0.5">
-            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">房间号 (RID)</label>
-            <span class="text-[9px] text-slate-400">支持短号/长号</span>
-          </div>
-          <div class="relative">
-            <input type="text" id="rid-input" value="6" placeholder="输入直播房间号" class="w-full bg-slate-50 hover:bg-white focus:bg-white text-slate-800 border border-slate-200 focus:border-blue-500 rounded py-1 px-2 text-xs font-mono outline-none transition" />
-            <span class="absolute right-2 top-1.5 text-[9px] text-slate-400 font-mono">LIVE</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="p-2 border-t border-slate-200 bg-slate-50/70 shrink-0">
-        <button id="toggle-scan-btn" onclick="toggleScan()" class="w-full py-1.5 px-2.5 rounded bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shadow-xs transition">
-          <i id="btn-icon" class="fa-solid fa-play text-[9px]"></i><span id="btn-text">启动扫描监控</span>
+        <button class="btn-ghost accent" style="width:100%;justify-content:center;margin-top:10px" onclick="ui.openLogin('mihoyo')">
+          <svg class="icon"><use href="#i-qr"/></svg><span>扫码登录</span>
         </button>
-        <div class="flex items-center justify-between text-[10px] text-slate-400 mt-1 px-0.5">
-          <span>快捷键: <kbd class="px-1 py-0.2 bg-white border border-slate-200 rounded text-[9px] font-mono">Space</kbd></span>
-          <span id="account-hint">账号就绪</span>
-        </div>
       </div>
-    </aside>
+    </section>
 
-    <div class="flex-1 flex flex-col min-w-0 gap-2 overflow-hidden">
-      <div class="grid grid-cols-4 gap-2 shrink-0">
-        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
-          <div class="w-7 h-7 rounded bg-blue-50 text-blue-600 flex items-center justify-center shrink-0"><i class="fa-regular fa-clock text-xs"></i></div>
-          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">运行时长</div><div id="stat-runtime" class="text-xs font-bold font-mono text-slate-800 truncate leading-tight mt-0.5">00:00:00</div></div>
+    <section class="card">
+      <div class="card-h"><span class="card-t">直播源</span><span class="badge" id="platform-badge">B站</span></div>
+      <div class="card-b" style="display:flex;flex-direction:column;gap:10px">
+        <div class="seg" id="platform-seg" role="tablist" aria-label="直播平台">
+          <button class="on" data-platform="bili" role="tab" aria-selected="true">
+            <svg class="icon"><use href="#i-tv"/></svg><span>哔哩哔哩</span>
+          </button>
+          <button data-platform="douyin" role="tab" aria-selected="false">
+            <svg class="icon"><use href="#i-music"/></svg><span>抖音</span>
+          </button>
         </div>
-        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
-          <div class="w-7 h-7 rounded bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-layer-group text-xs"></i></div>
-          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">已解码帧数</div><div id="stat-frames" class="text-xs font-bold font-mono text-slate-800 truncate leading-tight mt-0.5">0</div></div>
-        </div>
-        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
-          <div class="w-7 h-7 rounded bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><i class="fa-solid fa-qrcode text-xs"></i></div>
-          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">识别二维码</div><div id="stat-qr" class="text-xs font-bold font-mono text-emerald-600 truncate leading-tight mt-0.5">0</div></div>
-        </div>
-        <div class="bg-white rounded-lg border border-slate-200 px-2.5 py-1.5 flex items-center gap-2 shadow-xs">
-          <div id="link-icon-box" class="w-7 h-7 rounded bg-slate-100 text-slate-500 flex items-center justify-center shrink-0"><i id="link-icon" class="fa-solid fa-circle-notch text-xs"></i></div>
-          <div class="min-w-0"><div class="text-[9px] font-medium text-slate-400 leading-none">拉流状态</div><div id="stat-link" class="text-xs font-bold text-slate-600 truncate leading-tight mt-0.5">未连接</div></div>
-        </div>
-      </div>
-
-      <div class="h-36 bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
-        <div class="h-7 border-b border-slate-100 px-2 flex items-center justify-between bg-slate-50/70 shrink-0">
-          <div class="flex items-center gap-1.5">
-            <span class="font-bold text-slate-800 text-[11px]">识别与代登流水</span>
-            <span id="qr-count-badge" class="bg-slate-200 text-slate-600 text-[9px] px-1.5 py-0.2 rounded-full font-mono">0 条</span>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">
+            <span class="hint">房间号 RID</span>
+            <span class="hint" style="font-size:9.5px">支持短号 / 长号</span>
           </div>
-          <button onclick="clearQREvents()" class="text-[10px] text-slate-400 hover:text-rose-600 transition flex items-center gap-1"><i class="fa-regular fa-trash-can"></i><span>清空</span></button>
-        </div>
-        <div id="qr-feed" class="flex-1 overflow-y-auto p-1.5 space-y-1">
-          <div id="qr-empty-hint" class="h-full flex flex-col items-center justify-center text-slate-400 py-3">
-            <i class="fa-solid fa-inbox text-base text-slate-300 mb-0.5"></i>
-            <span class="text-[10px]">暂无识别记录，等待捕获登录二维码...</span>
+          <div class="field">
+            <input class="input" id="rid-input" value="6" placeholder="输入 B 站直播间号" spellcheck="false" autocomplete="off" />
+            <span class="suffix">LIVE</span>
           </div>
         </div>
       </div>
+    </section>
 
-      <div class="flex-1 bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col min-h-0 overflow-hidden">
-        <div class="h-7 border-b border-slate-200 px-2 flex items-center justify-between bg-slate-50/80 shrink-0">
-          <div class="flex items-center gap-0.5" id="log-tabs">
-            <button onclick="filterLogs(event,'ALL')" class="log-tab-btn active px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white text-blue-600 shadow-xs border border-slate-200">全部</button>
-            <button onclick="filterLogs(event,'STREAM')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">STREAM</button>
-            <button onclick="filterLogs(event,'QR')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">QR</button>
-            <button onclick="filterLogs(event,'LOGIN')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">LOGIN</button>
-            <button onclick="filterLogs(event,'ERROR')" class="log-tab-btn px-1.5 py-0.5 rounded text-[10px] font-medium text-slate-600 hover:text-slate-900">ERROR</button>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <div class="relative flex items-center">
-              <i class="fa-solid fa-magnifying-glass absolute left-1.5 text-[8px] text-slate-400"></i>
-              <input type="text" id="log-search-input" oninput="searchLogs(this.value)" placeholder="搜索日志..." class="pl-4 pr-1 py-0.5 text-[9px] bg-white border border-slate-200 rounded focus:border-blue-500 outline-none w-24 transition" />
-            </div>
-            <button onclick="exportLogs()" title="导出日志" class="text-slate-400 hover:text-slate-700 text-[10px] px-1"><i class="fa-solid fa-download"></i></button>
-            <button onclick="clearLogs()" title="清空终端" class="text-slate-400 hover:text-rose-600 text-[10px] px-1"><i class="fa-solid fa-ban"></i></button>
-          </div>
+    <section class="card">
+      <div class="card-h"><span class="card-t">运行环境</span></div>
+      <div class="card-b" style="display:flex;flex-direction:column;gap:1px">
+        <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-qr"/></svg>米哈游账号</span><span class="v" id="kv-mhy">未绑定</span></div>
+        <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-tv"/></svg>B站凭证</span><span class="v" id="kv-bili">未登录</span></div>
+        <div class="kv"><span class="k"><svg class="icon" style="width:12px;height:12px"><use href="#i-bolt"/></svg>识别引擎</span><span class="v">openh264 · rxing</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-h"><span class="card-t">本次会话</span></div>
+      <div class="card-b" style="display:flex;flex-direction:column;gap:1px">
+        <div class="kv"><span class="k">识别记录</span><span class="v" id="sess-feed">0</span></div>
+        <div class="kv"><span class="k">抢码成功</span><span class="v" id="sess-ok">0</span></div>
+        <div class="kv"><span class="k">最近 ticket</span><span class="v" id="sess-ticket" title="">--</span></div>
+        <div class="kv"><span class="k">启动次数</span><span class="v" id="sess-runs">0</span></div>
+      </div>
+    </section>
+    </div>
+
+    <section class="rail-action">
+      <button class="btn-primary" id="scan-btn" onclick="ui.toggleScan()">
+        <svg class="icon" id="scan-ico"><use href="#i-play"/></svg>
+        <span id="scan-label">启动扫描监控</span>
+      </button>
+      <div class="action-meta">
+        <span><kbd>Space</kbd> 启停</span>
+        <span id="action-hint">等待启动</span>
+      </div>
+    </section>
+  </aside>
+
+  <main class="main">
+    <div class="stats">
+      <div class="stat" id="stat-runtime-card">
+        <div class="ico"><svg class="icon-lg"><use href="#i-clock"/></svg></div>
+        <div class="body">
+          <div class="lbl">运行时长</div>
+          <div class="val" id="stat-runtime">00:00:00</div>
+          <div class="sub" id="stat-runtime-sub">空闲</div>
         </div>
-        <div id="terminal-body" class="flex-1 p-2 font-mono text-[10px] leading-4 overflow-y-auto bg-slate-950 text-slate-300 space-y-0.5 select-text">
-          <div class="text-slate-500 font-sans text-[9px] pb-1 border-b border-slate-800/80 mb-1 flex justify-between">
-            <span>[mhyscan Engine - 核心引擎就绪]</span><span id="current-clock">--:--:--</span>
-          </div>
+      </div>
+      <div class="stat" id="stat-frames-card">
+        <div class="ico"><svg class="icon-lg"><use href="#i-layers"/></svg></div>
+        <div class="body">
+          <div class="lbl">已解码帧数</div>
+          <div class="val" id="stat-frames">0</div>
+          <div class="sub" id="stat-frames-sub">-- fps</div>
+        </div>
+      </div>
+      <div class="stat" id="stat-qr-card">
+        <div class="ico"><svg class="icon-lg"><use href="#i-qr"/></svg></div>
+        <div class="body">
+          <div class="lbl">解码尝试</div>
+          <div class="val" id="stat-qr">0</div>
+          <div class="sub" id="stat-qr-sub">累计抽检帧</div>
+        </div>
+      </div>
+      <div class="stat" id="stat-link-card">
+        <div class="ico"><svg class="icon-lg"><use href="#i-wifi"/></svg></div>
+        <div class="body">
+          <div class="lbl">拉流状态</div>
+          <div class="val" id="stat-link">未连接</div>
+          <div class="sub" id="stat-link-sub">--</div>
         </div>
       </div>
     </div>
-  </main>
 
-  <div id="login-modal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs hidden flex items-center justify-center z-50 p-4">
-    <div class="bg-white w-full max-w-xs rounded-xl border border-slate-200 shadow-2xl p-3.5 flex flex-col items-center">
-      <div class="w-full flex justify-between items-center mb-2">
-        <h3 id="modal-title" class="font-bold text-slate-900 text-xs">米哈游通行证扫码登录</h3>
-        <button onclick="closeLoginModal()" class="text-slate-400 hover:text-slate-600 w-5 h-5 flex items-center justify-center rounded"><i class="fa-solid fa-xmark text-xs"></i></button>
+    <section class="card feed">
+      <div class="card-h">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="card-t">识别流水</span>
+          <span class="badge" id="qr-count">0 条</span>
+        </div>
+        <button class="btn-ghost" onclick="ui.clearFeed()"><svg class="icon" style="width:12px;height:12px"><use href="#i-trash"/></svg><span>清空</span></button>
       </div>
-      <div class="w-36 h-36 bg-slate-50 border-2 border-dashed border-slate-200 rounded-lg flex items-center justify-center p-1 overflow-hidden">
-        <img id="qr-img" class="w-32 h-32 rounded shadow-xs hidden" alt="QR" />
-        <i id="qr-placeholder" class="fa-solid fa-qrcode text-3xl text-slate-300"></i>
+      <div class="feed-body" id="feed-body">
+        <div class="empty" id="feed-empty">
+          <svg class="icon"><use href="#i-inbox"/></svg>
+          <span>暂无识别记录</span>
+          <small>捕获到登录二维码后会在此显示 ticket</small>
+        </div>
       </div>
-      <p id="qr-hint" class="text-[10px] text-slate-500 mt-2 text-center">正在生成二维码…</p>
-      <div class="w-full mt-2.5 pt-2 border-t border-slate-100 flex gap-2">
-        <button onclick="openBiliLoginModal()" class="flex-1 py-1 bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-medium rounded transition">B站登录</button>
-        <button onclick="closeLoginModal()" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-medium rounded transition">取消</button>
+    </section>
+
+    <section class="card logs" id="logs-card">
+      <div class="logs-head">
+        <div class="tabs" id="log-tabs">
+          <button class="on" data-cat="ALL" onclick="ui.filterLogs('ALL')">全部</button>
+          <button data-cat="STREAM" onclick="ui.filterLogs('STREAM')">STREAM</button>
+          <button data-cat="QR" onclick="ui.filterLogs('QR')">QR</button>
+          <button data-cat="LOGIN" onclick="ui.filterLogs('LOGIN')">LOGIN</button>
+          <button data-cat="ERROR" onclick="ui.filterLogs('ERROR')">ERROR</button>
+        </div>
+        <div class="grow"></div>
+        <div class="search">
+          <svg class="icon"><use href="#i-search"/></svg>
+          <input id="log-search" placeholder="搜索日志…" spellcheck="false" oninput="ui.searchLogs(this.value)" />
+        </div>
+        <button class="btn-ghost icon-only" title="导出日志" onclick="ui.exportLogs()"><svg class="icon" style="width:12px;height:12px"><use href="#i-download"/></svg></button>
+        <button class="btn-ghost icon-only" title="清空日志" onclick="ui.clearLogs()"><svg class="icon" style="width:12px;height:12px"><use href="#i-trash"/></svg></button>
       </div>
+      <div class="logs-body" id="log-body"></div>
+      <button class="to-bottom" id="to-bottom" onclick="ui.scrollLogsToBottom()">
+        <svg class="icon" style="width:11px;height:11px"><use href="#i-arrow-down"/></svg><span>回到底部</span>
+      </button>
+    </section>
+  </main>
+</div>
+
+<div class="overlay" id="login-overlay" onclick="if(event.target===this)ui.closeLogin()">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="dialog-h">
+      <h3 id="login-title">米哈游通行证扫码登录</h3>
+      <button class="x" onclick="ui.closeLogin()" aria-label="关闭"><svg class="icon"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="dialog-b">
+      <div class="qr-box loading" id="qr-box">
+        <img id="qr-img" alt="登录二维码" />
+        <div class="ph"><svg class="icon"><use href="#i-qr"/></svg><span>二维码加载中</span></div>
+      </div>
+      <div class="hint-text" id="login-hint">正在生成二维码…</div>
+      <div class="hint-sub" id="login-sub">请使用对应 App 扫码并在手机上确认</div>
+    </div>
+    <div class="dialog-f">
+      <button class="btn-ghost" id="login-switch" onclick="ui.switchLogin()">B站登录</button>
+      <button class="btn-ghost" id="login-ok" onclick="ui.closeLogin()">取消</button>
     </div>
   </div>
+</div>
 
-  <script>
-    const IN_TAURI = typeof window.__TAURI__ !== "undefined";
-    const TAURI = IN_TAURI ? window.__TAURI__ : null;
+<div class="toasts" id="toasts"></div>
 
-    let isScanning = false, timerInterval = null, secondsElapsed = 0;
-    let decodedFrames = 0, qrRecognizedCount = 0;
-    let currentLogFilter = 'ALL', currentLogQuery = '';
-    const logsData = [];
+<script>
+"use strict";
 
-    setInterval(() => {
-      const el = document.getElementById('current-clock');
-      if (el) el.innerText = new Date().toLocaleTimeString();
-    }, 1000);
+/* ============================================================
+   环境
+   ============================================================ */
+const IN_TAURI = typeof window.__TAURI__ !== "undefined";
+const TAURI = IN_TAURI ? window.__TAURI__ : null;
+const invoke = (cmd, args) => TAURI.core.invoke(cmd, args);
+const listen = (evt, cb) => TAURI.event.listen(evt, cb);
 
-    const formatTimer = (s) => {
-      const h = Math.floor(s / 3600).toString().padStart(2, '0');
-      const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
-      const sec = (s % 60).toString().padStart(2, '0');
-      return `${h}:${m}:${sec}`;
-    };
+const MAX_LOGS = 2500;
+const DEMO = !IN_TAURI;
+const PLATFORM_LABEL = { bili: "哔哩哔哩", douyin: "抖音" };
 
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') { e.preventDefault(); toggleScan(); }
-    });
+const state = {
+  platform: "bili",
+  rid: "6",
+  accounts: [],
+  logs: [],
+  logFilter: "ALL",
+  logQuery: "",
+  autoScroll: true,
+  feedCount: 0,
+  feedMap: new Map(),
+  scanState: "idle",          // idle | connecting | live | stopping | error
+  login: { open: false, kind: "mihoyo", busy: false, session: 0 },
+  stats: { seconds: 0, frames: 0, attempts: 0, fps: 0, memory: null, prevFrames: 0, prevSeconds: 0, prevMs: 0 },
+  session: { runs: 0, feed: 0, ok: 0, lastTicket: "" },
+  timer: null,
+};
 
-    function classify(msg) {
-      if (/错误|失败|Error|异常/.test(msg)) return 'ERROR';
-      if (/抢码|登录|scanQRLogin|confirm|账号/.test(msg)) return 'LOGIN';
-      if (/二维码|识别|rxing|ticket/i.test(msg)) return 'QR';
-      if (/直播流|拉流|FLV|流地址|B站|抖音|预热|获取到|候选/.test(msg)) return 'STREAM';
-      return 'SYSTEM';
+const $ = (id) => document.getElementById(id);
+
+function h(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+function svgIcon(name, cls) {
+  const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  s.setAttribute("class", cls || "icon");
+  const u = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  u.setAttribute("href", "#" + name);
+  u.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "#" + name);
+  s.appendChild(u);
+  return s;
+}
+const fmtInt = (n) => Number(n || 0).toLocaleString("en-US");
+function fmtClock(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  return [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60]
+    .map((v) => String(v).padStart(2, "0")).join(":");
+}
+function nowTime() {
+  const d = new Date();
+  return [d.getHours(), d.getMinutes(), d.getSeconds()].map((v) => String(v).padStart(2, "0")).join(":");
+}
+
+/* ============================================================
+   日志
+   ============================================================ */
+function classify(msg) {
+  if (/(错误|失败|Error|异常|超时|没有可用|拒绝)/i.test(msg)) return "ERROR";
+  if (/(抢码|登录|账号|confirm|scanQRLogin)/i.test(msg)) return "LOGIN";
+  if (/(二维码|ticket|识别到)/i.test(msg)) return "QR";
+  if (/(直播流|拉流|FLV|流地址|候选|预热|B站|抖音|打开失败|HLS)/i.test(msg)) return "STREAM";
+  return "SYSTEM";
+}
+
+/* 兼容后端 " | " 分隔（旧版前端误用 " · "），两种都接受 */
+const PROGRESS_RE = /等待\s+(\d+)s\s*[·|]\s*流量\s*([\d.]+)\s*MB\s*[·|]\s*帧\s*(\d+)\s*[·|]\s*识别\s*(\d+)(?:\s*[·|]\s*内存\s*(\d+)\s*MB)?/;
+const TICKET_RE = /(?:tk=|ticket=)([0-9a-zA-Z_-]{8,})/;
+
+function addLog(cat, msg) {
+  const entry = { t: nowTime(), cat, msg: String(msg) };
+  state.logs.push(entry);
+  if (state.logs.length > MAX_LOGS) state.logs.shift();
+  renderLog(entry);
+  if (state.autoScroll) scrollLogsToBottom();
+  return entry;
+}
+
+function renderLog(entry) {
+  if (state.logFilter !== "ALL" && entry.cat !== state.logFilter) return;
+  if (state.logQuery && !entry.msg.toLowerCase().includes(state.logQuery.toLowerCase())) return;
+  const body = $("log-body");
+  const row = h("div", "ln" + (entry.cat === "ERROR" ? " err" : ""));
+  row.appendChild(h("span", "t", entry.t));
+  row.appendChild(h("span", "cat " + entry.cat, entry.cat));
+  row.appendChild(h("span", "msg", entry.msg));
+  body.appendChild(row);
+  while (body.children.length > MAX_LOGS) body.removeChild(body.firstChild);
+}
+
+function rerenderLogs() {
+  const body = $("log-body");
+  body.innerHTML = "";
+  for (const e of state.logs) renderLog(e);
+  scrollLogsToBottom();
+}
+function scrollLogsToBottom() {
+  const body = $("log-body");
+  body.scrollTop = body.scrollHeight;
+  state.autoScroll = true;
+  $("to-bottom").classList.remove("show");
+}
+function filterLogs(cat) {
+  state.logFilter = cat;
+  document.querySelectorAll("#log-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.cat === cat));
+  rerenderLogs();
+}
+function searchLogs(q) { state.logQuery = q.trim(); rerenderLogs(); }
+function clearLogs() {
+  state.logs = [];
+  $("log-body").innerHTML = "";
+  addLog("SYSTEM", "日志已清空");
+  toast("日志已清空");
+}
+function exportLogs() {
+  const txt = state.logs.map((l) => `[${l.t}] [${l.cat}] ${l.msg}`).join("\n");
+  try {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain" }));
+    a.download = `mhyscan_log_${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+    toast(`已导出 ${state.logs.length} 条日志`);
+  } catch (e) {
+    copyText(txt).then(() => toast("已复制全部日志到剪贴板"));
+  }
+}
+
+/* ============================================================
+   状态与指标
+   ============================================================ */
+function setConn(connState, text) {
+  const map = { idle: "idle", connecting: "busy", live: "live", stopping: "busy", error: "error" };
+  $("conn-pill").dataset.state = map[connState] || "idle";
+  $("conn-text").textContent = text;
+}
+
+function setScanState(s) {
+  state.scanState = s;
+  const btn = $("scan-btn");
+  const label = $("scan-label");
+  const ico = $("scan-ico").querySelector("use");
+  const linkCard = $("stat-link-card");
+  if (s === "idle" || s === "error") {
+    btn.classList.remove("is-stop", "is-busy");
+    ico.setAttribute("href", "#i-play");
+    label.textContent = "启动扫描监控";
+    setConn(s === "error" ? "error" : "idle", s === "error" ? "出错" : "就绪");
+    linkCard.dataset.tone = s === "error" ? "error" : "";
+    $("stat-link").textContent = s === "error" ? "出错" : "未连接";
+    $("stat-link-sub").textContent = "--";
+    $("action-hint").textContent = s === "error" ? "请检查日志" : "等待启动";
+    if (s === "idle") $("stat-runtime-sub").textContent = state.stats.seconds ? "已结束" : "空闲";
+  } else if (s === "connecting") {
+    btn.classList.add("is-stop");
+    ico.setAttribute("href", "#i-stop");
+    label.textContent = "停止扫描监控";
+    setConn("connecting", "连接中");
+    linkCard.dataset.tone = "busy";
+    $("stat-link").textContent = "连接中";
+    $("stat-link-sub").textContent = `${PLATFORM_LABEL[state.platform]} · RID ${state.rid}`;
+    $("action-hint").textContent = "解析直播流…";
+    $("stat-runtime-sub").textContent = "连接中";
+  } else if (s === "live") {
+    btn.classList.add("is-stop");
+    ico.setAttribute("href", "#i-stop");
+    label.textContent = "停止扫描监控";
+    setConn("live", "监控中");
+    linkCard.dataset.tone = "live";
+    $("stat-link").textContent = "已连接";
+    $("stat-link-sub").textContent = `${PLATFORM_LABEL[state.platform]} · RID ${state.rid}`;
+    $("action-hint").textContent = "识别中…";
+    $("stat-runtime-sub").textContent = `已连接 ${PLATFORM_LABEL[state.platform]}`;
+  } else if (s === "stopping") {
+    btn.classList.add("is-stop", "is-busy");
+    label.textContent = "正在停止…";
+    setConn("stopping", "停止中");
+    $("action-hint").textContent = "等待引擎退出";
+  }
+}
+
+function startRuntimeTicker() {
+  stopRuntimeTicker();
+  state.timer = setInterval(() => {
+    if (state.scanState === "idle" || state.scanState === "error") return;
+    state.stats.seconds += 1;
+    const c = fmtClock(state.stats.seconds);
+    $("stat-runtime").textContent = c;
+    $("m-runtime").textContent = c;
+  }, 1000);
+}
+function stopRuntimeTicker() {
+  if (state.timer) { clearInterval(state.timer); state.timer = null; }
+}
+
+function resetStats() {
+  Object.assign(state.stats, { seconds: 0, frames: 0, attempts: 0, fps: 0, memory: null, prevFrames: 0, prevSeconds: 0, prevMs: Date.now() });
+  $("stat-runtime").textContent = "00:00:00";
+  $("m-runtime").textContent = "00:00:00";
+  $("stat-frames").textContent = "0";
+  $("stat-frames-sub").textContent = "-- fps";
+  $("stat-qr").textContent = "0";
+  $("stat-qr-sub").textContent = "累计抽检帧";
+  $("m-fps").textContent = "--";
+  $("m-fps").classList.add("dim");
+}
+
+function applyProgress(m) {
+  state.stats.seconds = parseInt(m[1], 10);
+  state.stats.frames = parseInt(m[3], 10);
+  state.stats.attempts = parseInt(m[4], 10);
+  state.stats.memory = m[5] ? parseInt(m[5], 10) : null;
+
+  const now = Date.now();
+  const dsec = state.stats.prevSeconds ? state.stats.seconds - state.stats.prevSeconds : 0;
+  const dt = dsec > 0 ? dsec : (now - state.stats.prevMs) / 1000;
+  const df = state.stats.frames - state.stats.prevFrames;
+  if (dt > 0.5 && state.stats.prevFrames > 0 && df >= 0) {
+    const inst = df / dt;
+    state.stats.fps = state.stats.fps ? state.stats.fps * 0.6 + inst * 0.4 : inst;
+  }
+  state.stats.prevFrames = state.stats.frames;
+  state.stats.prevSeconds = state.stats.seconds;
+  state.stats.prevMs = now;
+
+  const c = fmtClock(state.stats.seconds);
+  $("stat-runtime").textContent = c;
+  $("m-runtime").textContent = c;
+  $("stat-frames").textContent = fmtInt(state.stats.frames);
+  $("stat-qr").textContent = fmtInt(state.stats.attempts);
+  $("stat-frames-sub").textContent = state.stats.fps ? `${state.stats.fps.toFixed(1)} fps` : "-- fps";
+  $("stat-qr-sub").textContent = `${fmtInt(state.stats.attempts)} 次抽检`;
+  $("m-fps").textContent = state.stats.fps ? state.stats.fps.toFixed(1) : "--";
+  $("m-fps").classList.toggle("dim", !state.stats.fps);
+}
+
+function compactLog(msg) {
+  let text = String(msg).trim();
+  // 二维码 URL → ticket 摘要
+  text = text.replace(/(识别到登录二维码!\s*)\S*ticket=([0-9a-zA-Z_-]{8,})\S*/, (_, p, tk) => `${p}ticket ${tk.slice(0, 10)}…`);
+  // 抢码成功日志里的完整 ticket → 摘要
+  text = text.replace(/(抢码成功!\s*ticket=)([0-9a-zA-Z_-]{12,})/, (_, p, tk) => `${p}${tk.slice(0, 10)}…`);
+  return text;
+}
+
+function onScanLog(msg) {
+  const m = String(msg).match(PROGRESS_RE);
+  if (m) { applyProgress(m); return; }
+
+  const cat = classify(msg);
+  addLog(cat, compactLog(msg));
+
+  if (/\[1\/3\]\s*获取到/.test(msg)) setScanState("connecting");
+  if (/\[2\/3\]\s*直播流已连接/.test(msg)) setScanState("live");
+
+  const tm = String(msg).match(TICKET_RE);
+  if (tm && /识别到|抢码/.test(msg)) addFeedItem(tm[1], /抢码成功/.test(msg));
+}
+
+/* ============================================================
+   识别流水
+   ============================================================ */
+function addFeedItem(ticket, success) {
+  const existing = state.feedMap.get(ticket);
+  if (existing) {
+    if (success && !existing.success) {
+      existing.success = true;
+      existing.who.textContent = "抢码成功";
+      existing.who.classList.add("ok");
+      state.session.ok += 1;
+      $("sess-ok").textContent = state.session.ok;
     }
+    return;
+  }
+  const empty = $("feed-empty");
+  if (empty) empty.remove();
 
-    const PROGRESS_RE = /等待 (\d+)s · 流量 ([\d.]+)MB · 帧 (\d+) · 识别 (\d+) · 内存 (\d+)MB/;
-    function applyProgress(msg) {
-      const m = msg.match(PROGRESS_RE);
-      if (!m) return false;
-      secondsElapsed = parseInt(m[1], 10);
-      decodedFrames = parseInt(m[3], 10);
-      qrRecognizedCount = parseInt(m[4], 10);
-      document.getElementById('stat-runtime').innerText = formatTimer(secondsElapsed);
-      document.getElementById('stat-frames').innerText = decodedFrames.toLocaleString();
-      document.getElementById('stat-qr').innerText = qrRecognizedCount;
-      return true;
-    }
+  const row = h("div", "qr-row");
+  row.appendChild(h("span", "t", nowTime()));
+  const tk = h("span", "tk", ticket);
+  tk.title = ticket;
+  row.appendChild(tk);
+  row.appendChild(h("span", "meta", `${PLATFORM_LABEL[state.platform]} · RID ${state.rid}`));
+  const who = h("span", "who" + (success ? " ok" : ""), success ? "抢码成功" : "已识别");
+  row.appendChild(who);
 
-    function onScanLog(msg) {
-      if (applyProgress(msg)) return; // 进度只更新指标
-      addLog(classify(msg), msg);
-      const m = msg.match(/(?:tk=|ticket=)([0-9a-fA-F-]{8,})/);
-      if (m) addQrRecord(m[1]);
-    }
+  const copyBtn = h("button", "btn-ghost");
+  copyBtn.appendChild(svgIcon("i-copy", "icon"));
+  copyBtn.appendChild(h("span", "", "复制"));
+  copyBtn.title = "复制 ticket";
+  copyBtn.addEventListener("click", () => copyText(ticket).then(() => {
+    copyBtn.querySelector("span").textContent = "已复制";
+    toast("ticket 已复制");
+    setTimeout(() => { copyBtn.querySelector("span").textContent = "复制"; }, 900);
+  }));
+  row.appendChild(copyBtn);
 
-    function addQrRecord(ticket) {
-      const emptyHint = document.getElementById('qr-empty-hint');
-      if (emptyHint) emptyHint.remove();
-      const rid = document.getElementById('rid-input').value.trim() || '6';
-      const item = document.createElement('div');
-      item.className = 'flex items-center justify-between p-1 rounded bg-slate-50 border border-slate-200/80 hover:bg-blue-50/40 transition text-slate-700 text-xs';
-      item.innerHTML = `
-        <div class="flex items-center gap-1.5 min-w-0">
-          <span class="font-mono text-[9px] text-slate-400">${new Date().toLocaleTimeString()}</span>
-          <span class="font-mono font-semibold text-blue-600 text-[10px] truncate">${ticket.slice(0, 16)}</span>
-          <span class="text-[9px] text-slate-400">RID:${rid}</span>
-        </div>
-        <button class="text-[9px] px-1 py-0.2 rounded bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition" onclick="copyText('${ticket}', this)">复制</button>`;
-      document.getElementById('qr-feed').prepend(item);
-      document.getElementById('qr-count-badge').innerText = `${qrRecognizedCount} 条`;
-    }
+  $("feed-body").prepend(row);
+  state.feedMap.set(ticket, { row, who, success: !!success });
+  state.feedCount += 1;
+  $("qr-count").textContent = `${state.feedCount} 条`;
+  state.session.feed += 1;
+  state.session.lastTicket = ticket;
+  $("sess-feed").textContent = state.session.feed;
+  $("sess-ticket").textContent = ticket.length > 14 ? ticket.slice(0, 14) + "…" : ticket;
+  $("sess-ticket").title = ticket;
+  if (success) {
+    state.session.ok += 1;
+    $("sess-ok").textContent = state.session.ok;
+  }
+}
 
-    function copyText(text, btn) {
-      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.resolve()).finally(() => {
-        const prev = btn.innerText; btn.innerText = '已复制';
-        setTimeout(() => (btn.innerText = prev), 1000);
-      });
-    }
-    function copyTicket(t, b) { copyText(t, b); }
+function clearFeed() {
+  state.feedMap.clear();
+  state.feedCount = 0;
+  $("qr-count").textContent = "0 条";
+  const body = $("feed-body");
+  body.innerHTML = "";
+  const e = h("div", "empty");
+  e.id = "feed-empty";
+  e.appendChild(svgIcon("i-inbox", "icon"));
+  e.appendChild(h("span", "", "暂无识别记录"));
+  e.appendChild(h("small", "", "捕获到登录二维码后会在此显示 ticket"));
+  body.appendChild(e);
+}
 
-    function clearQREvents() {
-      document.getElementById('qr-feed').innerHTML = `
-        <div id="qr-empty-hint" class="h-full flex flex-col items-center justify-center text-slate-400 py-3">
-          <i class="fa-solid fa-inbox text-base text-slate-300 mb-0.5"></i>
-          <span class="text-[10px]">暂无识别记录，等待捕获登录二维码...</span>
-        </div>`;
-      qrRecognizedCount = 0;
-      document.getElementById('qr-count-badge').innerText = '0 条';
-      document.getElementById('stat-qr').innerText = '0';
-    }
+/* ============================================================
+   账号 / 登录
+   ============================================================ */
+function renderAccounts() {
+  const n = state.accounts.length;
+  $("acct-count").textContent = `${n} 个`;
+  const btn = $("account-btn");
+  if (!n) {
+    $("acct-name").textContent = "未绑定米哈游账号";
+    $("acct-sub").textContent = "扫码登录后自动抢码";
+    $("acct-type").textContent = "官服";
+    $("acct-type").style.display = "none";
+    $("acct-avatar").textContent = "M";
+    $("account-label").textContent = "未绑定账号";
+    $("account-avatar").textContent = "?";
+    btn.classList.remove("is-bound");
+    $("kv-mhy").textContent = "未绑定";
+    $("kv-mhy").className = "v";
+    return;
+  }
+  const a = state.accounts[0];
+  $("acct-name").textContent = a.name || "米哈游账号";
+  $("acct-sub").textContent = `UID ${a.uid || "--"}${a.mid ? ` · MID ${a.mid}` : ""}`;
+  $("acct-type").textContent = a.type || "官服";
+  $("acct-type").style.display = "";
+  $("acct-avatar").textContent = String(a.name || "M").slice(0, 1).toUpperCase();
+  $("account-label").textContent = `${a.name || "账号"}${n > 1 ? ` +${n - 1}` : ""}`;
+  $("account-avatar").textContent = String(a.name || "M").slice(0, 1).toUpperCase();
+  btn.classList.add("is-bound");
+  $("kv-mhy").textContent = `${n} 个已加载`;
+  $("kv-mhy").className = "v ok";
+}
 
-    function addLog(category, message) {
-      const entry = { time: new Date().toLocaleTimeString(), category, message };
-      logsData.push(entry);
-      renderSingleLog(entry);
-    }
+async function loadAccounts() {
+  if (!IN_TAURI) return;
+  try {
+    const list = await invoke("list_accounts");
+    state.accounts = Array.isArray(list) ? list : [];
+    renderAccounts();
+  } catch (e) {
+    addLog("ERROR", `账号读取失败: ${e}`);
+  }
+}
 
-    function renderSingleLog(entry) {
-      if (currentLogFilter !== 'ALL' && entry.category !== currentLogFilter) return;
-      if (currentLogQuery && !entry.message.toLowerCase().includes(currentLogQuery.toLowerCase())) return;
-      const badge = {
-        STREAM: '<span class="text-sky-400 font-bold">[STREAM]</span>',
-        QR: '<span class="text-purple-400 font-bold">[QR]</span>',
-        LOGIN: '<span class="text-emerald-400 font-bold">[LOGIN]</span>',
-        ERROR: '<span class="text-rose-400 font-bold">[ERROR]</span>',
-      }[entry.category] || '<span class="text-slate-400 font-bold">[SYSTEM]</span>';
-      const body = document.getElementById('terminal-body');
-      const row = document.createElement('div');
-      row.className = 'flex items-start gap-1 py-0.2 hover:bg-slate-900/80 px-0.5 rounded transition';
-      row.innerHTML = `<span class="text-slate-500 shrink-0">${entry.time}</span>${badge}<span class="text-slate-200 break-all"></span>`;
-      row.lastChild.textContent = entry.message;
-      body.appendChild(row);
-      body.scrollTop = body.scrollHeight;
-    }
+async function openLogin(kind) {
+  if (state.login.busy) { showLogin(true); return; }
+  const session = ++state.login.session;
+  state.login.kind = kind || "mihoyo";
+  state.login.busy = true;
+  const isBili = state.login.kind === "bili";
+  $("login-title").textContent = isBili ? "B站扫码登录" : "米哈游通行证扫码登录";
+  $("login-sub").textContent = isBili ? "登录后用于拉流，凭证仅保存在本机" : "请使用米游社 App 扫码并在手机上确认";
+  $("login-switch").textContent = isBili ? "米哈游登录" : "B站登录";
+  resetQrBox();
+  showLogin(true);
 
-    function filterLogs(ev, category) {
-      currentLogFilter = category;
-      document.querySelectorAll('.log-tab-btn').forEach((b) => {
-        b.classList.remove('active', 'bg-white', 'text-blue-600', 'shadow-xs', 'border', 'border-slate-200');
-        b.classList.add('text-slate-600');
-      });
-      ev.target.classList.add('active', 'bg-white', 'text-blue-600', 'shadow-xs', 'border', 'border-slate-200');
-      ev.target.classList.remove('text-slate-600');
-      reRenderAllLogs();
-    }
-    function searchLogs(v) { currentLogQuery = v.trim(); reRenderAllLogs(); }
-    function reRenderAllLogs() {
-      const body = document.getElementById('terminal-body');
-      body.innerHTML = `<div class="text-slate-500 font-sans text-[9px] pb-1 border-b border-slate-800/80 mb-1 flex justify-between"><span>[过滤: ${currentLogFilter}]</span><span>${new Date().toLocaleTimeString()}</span></div>`;
-      logsData.forEach(renderSingleLog);
-    }
-    function clearLogs() { logsData.length = 0; reRenderAllLogs(); }
-    function exportLogs() {
-      const txt = logsData.map((l) => `[${l.time}] [${l.category}] ${l.message}`).join('\n');
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
-      a.download = `mhyscan_log_${Date.now()}.txt`;
-      a.click();
-    }
+  if (!IN_TAURI) {
+    $("login-hint").textContent = "演示模式：未连接本地引擎";
+    state.login.busy = false;
+    return;
+  }
+  try {
+    if (isBili) await invoke("start_bili_login");
+    else await invoke("start_login");
+    if (session !== state.login.session) return;
+    state.login.busy = false;
+  } catch (e) {
+    if (session !== state.login.session) return;
+    $("login-hint").textContent = `失败: ${e}`;
+    $("login-hint").style.color = "var(--err)";
+    state.login.busy = false;
+    addLog("ERROR", `登录失败: ${e}`);
+  }
+}
 
-    /* ---------- 账号 ---------- */
-    function setAccount(a) {
-      if (a) {
-        document.getElementById('sidebar-account-name').innerText = a.name;
-        document.getElementById('sidebar-account-sub').innerText = `UID: ${a.uid} (${a.type || '官服'})`;
-        document.getElementById('nav-user-label').innerText = a.name;
-        document.getElementById('account-hint').innerText = `已就绪 (UID: ${a.uid})`;
-      } else {
-        document.getElementById('sidebar-account-name').innerText = '暂无账号绑定';
-        document.getElementById('sidebar-account-sub').innerText = '扫码极速登录';
-        document.getElementById('nav-user-label').innerText = '未绑定账号';
-        document.getElementById('account-hint').innerText = '账号就绪';
-      }
-    }
-    async function loadAccounts() {
-      if (!IN_TAURI) return;
-      try {
-        const list = await TAURI.core.invoke('list_accounts');
-        setAccount(list[0] || null);
-      } catch (e) { addLog('ERROR', '账号读取失败: ' + e); }
-    }
+function switchLogin() {
+  const next = state.login.kind === "mihoyo" ? "bili" : "mihoyo";
+  closeLogin();
+  setTimeout(() => openLogin(next), 80);
+}
 
-    /* ---------- 登录弹窗 ---------- */
-    function showQr(title) {
-      document.getElementById('modal-title').innerText = title;
-      document.getElementById('qr-img').classList.add('hidden');
-      document.getElementById('qr-placeholder').classList.remove('hidden');
-      document.getElementById('qr-hint').innerText = '正在生成二维码…';
-      document.getElementById('login-modal').classList.remove('hidden');
-    }
-    function onQr(dataUrl) {
-      const img = document.getElementById('qr-img');
-      img.src = dataUrl; img.classList.remove('hidden');
-      document.getElementById('qr-placeholder').classList.add('hidden');
-      document.getElementById('qr-hint').innerText = '请用对应 App 扫码授权';
-    }
-    async function openLoginModal() {
-      showQr('米哈游通行证扫码登录');
-      if (IN_TAURI) { try { await TAURI.core.invoke('start_login'); } catch (e) { document.getElementById('qr-hint').innerText = '失败: ' + e; } }
-      else document.getElementById('qr-hint').innerText = '演示模式：请用米游社 App 扫码';
-    }
-    async function openBiliLoginModal() {
-      showQr('B站扫码登录 (拉流凭证)');
-      if (IN_TAURI) { try { await TAURI.core.invoke('start_bili_login'); } catch (e) { document.getElementById('qr-hint').innerText = '失败: ' + e; } }
-      else document.getElementById('qr-hint').innerText = '演示模式：请用 B站 App 扫码';
-    }
-    function closeLoginModal() { document.getElementById('login-modal').classList.add('hidden'); }
+function showLogin(show) {
+  $("login-overlay").classList.toggle("show", show);
+  state.login.open = show;
+}
 
-    /* ---------- 启停 ---------- */
-    function setScanUI(on) {
-      isScanning = on;
-      const btn = document.getElementById('toggle-scan-btn');
-      btn.classList.toggle('bg-blue-600', !on); btn.classList.toggle('hover:bg-blue-700', !on);
-      btn.classList.toggle('bg-rose-600', on); btn.classList.toggle('hover:bg-rose-700', on);
-      document.getElementById('btn-icon').className = on ? 'fa-solid fa-stop text-[9px]' : 'fa-solid fa-play text-[9px]';
-      document.getElementById('btn-text').innerText = on ? '停止扫描监控' : '启动扫描监控';
-      const box = document.getElementById('link-icon-box'), icon = document.getElementById('link-icon'), link = document.getElementById('stat-link');
-      box.className = on ? 'w-7 h-7 rounded bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0' : 'w-7 h-7 rounded bg-slate-100 text-slate-500 flex items-center justify-center shrink-0';
-      icon.className = on ? 'fa-solid fa-wifi text-xs' : 'fa-solid fa-circle-notch text-xs';
-      link.className = on ? 'text-xs font-bold text-emerald-600 truncate leading-tight mt-0.5' : 'text-xs font-bold text-slate-600 truncate leading-tight mt-0.5';
-      link.innerText = on ? '已连接拉流' : '未连接';
-      document.getElementById('global-indicator').className = on ? 'w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse' : 'w-1.5 h-1.5 rounded-full bg-slate-400';
-      document.getElementById('global-status-text').innerText = on ? '监控中' : '已挂起';
-      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-      if (on) timerInterval = setInterval(() => { secondsElapsed++; document.getElementById('stat-runtime').innerText = formatTimer(secondsElapsed); }, 1000);
+function closeLogin() {
+  state.login.session += 1;
+  showLogin(false);
+  state.login.busy = false;
+  const img = $("qr-img");
+  img.classList.remove("show");
+  img.removeAttribute("src");
+  $("qr-box").querySelector(".ph").style.display = "";
+  $("login-hint").style.color = "";
+}
+
+function resetQrBox() {
+  const img = $("qr-img");
+  img.classList.remove("show");
+  img.removeAttribute("src");
+  $("qr-box").classList.add("loading");
+  $("qr-box").querySelector(".ph").style.display = "";
+  $("login-hint").textContent = "正在生成二维码…";
+  $("login-hint").style.color = "";
+}
+
+function onQr(dataUrl) {
+  if (!state.login.open) return;
+  const img = $("qr-img");
+  img.src = dataUrl;
+  img.classList.add("show");
+  $("qr-box").classList.remove("loading");
+  $("qr-box").querySelector(".ph").style.display = "none";
+  $("login-hint").textContent = "请使用对应 App 扫码并在手机上确认";
+}
+
+function onLoginStatus(status) {
+  if (!state.login.open) return;
+  const text = String(status);
+  const map = {
+    scanned: "已扫码，等待手机确认…",
+    confirmed: "已确认，正在写入账号…",
+    expired: "二维码已过期，请重新登录",
+  }[text.toLowerCase()];
+  $("login-hint").textContent = map || `状态: ${text}`;
+  if (/expired/i.test(text)) $("login-hint").style.color = "var(--err)";
+}
+
+function onLoginDone(payload) {
+  const msg = String(payload);
+  // 用 payload 特征判断登录类型，避免切换登录后事件串台
+  if (/cookie/i.test(msg)) {
+    const n = (msg.match(/(\d+)\s*个?\s*cookie/i) || [])[1];
+    $("kv-bili").textContent = n ? `已登录 · ${n} cookies` : "已登录";
+    $("kv-bili").className = "v ok";
+    addLog("LOGIN", `B站登录完成: ${msg}`);
+    if (state.login.open) {
+      $("login-hint").textContent = "B站凭证已保存";
+      $("login-hint").style.color = "var(--accent)";
     }
-
-    async function toggleScan() {
-      const platform = document.getElementById('platform-select').value;
-      const rid = document.getElementById('rid-input').value.trim();
-
-      if (!IN_TAURI) {
-        setScanUI(!isScanning);
-        addLog('STREAM', isScanning ? `开始拉取 [${platform}] 房间 RID-${rid}...` : '监控已停止');
-        return;
-      }
-      if (isScanning) { await TAURI.core.invoke('stop_scan'); return; }
-      if (!rid) { addLog('ERROR', '请先填写房间号 RID'); return; }
-      setScanUI(true);
-      addLog('STREAM', `开始拉取 [${platform}] 房间 RID-${rid}...`);
-      try { await TAURI.core.invoke('scan', { platform, rid, timeout: 86400 }); }
-      catch (e) { addLog('ERROR', String(e)); setScanUI(false); }
+    toast("B站登录成功");
+  } else {
+    addLog("LOGIN", `米哈游登录完成: ${msg}`);
+    if (state.login.open) {
+      $("login-hint").textContent = `登录成功: ${msg}`;
+      $("login-hint").style.color = "var(--accent)";
     }
+    loadAccounts();
+    toast("账号已绑定");
+  }
+  state.login.busy = false;
+  setTimeout(() => { if (state.login.open) closeLogin(); }, 900);
+}
 
-    /* ---------- 初始化 ---------- */
-    (async () => {
-      if (IN_TAURI) {
-        await TAURI.event.listen('scan-log', (e) => onScanLog(e.payload));
-        await TAURI.event.listen('scan-done', (e) => { addLog('SYSTEM', String(e.payload)); setScanUI(false); });
-        await TAURI.event.listen('login-qr', (e) => onQr(e.payload));
-        await TAURI.event.listen('login-qr-text', (e) => console.debug('qr text', e.payload));
-        await TAURI.event.listen('login-status', (e) => { document.getElementById('qr-hint').innerText = '状态: ' + e.payload; });
-        await TAURI.event.listen('login-done', (e) => {
-          document.getElementById('qr-hint').innerText = '登录成功: ' + e.payload;
-          addLog('LOGIN', '登录成功: ' + e.payload);
-          loadAccounts();
-          setTimeout(closeLoginModal, 1000);
-        });
-        await loadAccounts();
-        addLog('SYSTEM', '控制台就绪，等待启动扫描。');
-      } else {
-        addLog('SYSTEM', '演示模式 (未连接后端)');
-      }
-      setInterval(() => { document.getElementById('ping-text').innerText = `${Math.floor(Math.random() * 20 + 10)}ms`; }, 2000);
-    })();
-  </script>
+/* ============================================================
+   扫描控制
+   ============================================================ */
+async function toggleScan() {
+  if (state.scanState === "stopping") return;
+  if (state.scanState === "connecting" || state.scanState === "live") await stopScan();
+  else await startScan();
+}
+
+async function startScan() {
+  const rid = $("rid-input").value.trim();
+  if (!rid) {
+    $("rid-input").focus();
+    addLog("ERROR", "请先填写房间号 RID");
+    toast("请先填写房间号 RID", true);
+    return;
+  }
+  state.rid = rid;
+  state.session.runs += 1;
+  $("sess-runs").textContent = state.session.runs;
+  resetStats();
+  setScanState("connecting");
+  startRuntimeTicker();
+  addLog("STREAM", `开始拉取 [${PLATFORM_LABEL[state.platform]}] 房间 RID-${rid} …`);
+
+  if (!IN_TAURI) { startDemoScan(); return; }
+
+  try {
+    await invoke("scan", { platform: state.platform, rid, timeout: 86400 });
+  } catch (e) {
+    addLog("ERROR", String(e));
+    setScanState("error");
+    stopRuntimeTicker();
+    toast("启动失败，请查看日志", true);
+  }
+}
+
+async function stopScan() {
+  if (!IN_TAURI) { stopDemoScan(); return; }
+  setScanState("stopping");
+  addLog("SYSTEM", "正在停止引擎…");
+  try { await invoke("stop_scan"); }
+  catch (e) { addLog("ERROR", `停止失败: ${e}`); }
+}
+
+function onScanDone(payload) {
+  const msg = String(payload || "已结束");
+  addLog(/成功/.test(msg) ? "LOGIN" : "SYSTEM", `扫描结束: ${msg}`);
+  if (/成功/.test(msg)) toast(msg);
+  stopRuntimeTicker();
+  setScanState("idle");
+  $("stat-runtime-sub").textContent = "已结束";
+  if (!/成功/.test(msg)) toast(msg);
+}
+
+/* ============================================================
+   演示模式（无后端时的预览）
+   ============================================================ */
+let demo = null;
+function startDemoScan() {
+  let frames = 0, attempts = 0, ticks = 0;
+  const t0 = Date.now();
+  demo = setInterval(() => {
+    ticks += 1;
+    frames += 26 + Math.floor(Math.random() * 14);
+    if (ticks % 9 === 0) attempts += 1;
+    const secs = Math.floor((Date.now() - t0) / 1000);
+    onScanLog(`  等待 ${secs}s | 流量 ${(secs * 0.42 + 0.6).toFixed(1)}MB | 帧 ${frames} | 识别 ${attempts} | 内存 96MB | config=true`);
+    if (ticks === 3) onScanLog("[1/3] 获取到 4 个直播流候选");
+    if (ticks === 4) onScanLog("[2/3] 直播流已连接");
+    if (ticks === 5) onScanLog("[3/3] 开始识别二维码...");
+    if (ticks === 12) onScanLog("识别到登录二维码! https://user.mihoyo.com/qr_code_in_game.html?app_id=1&ticket=demo3f9a12bc4d5e6f7a8b9c0d1e2f3a4b");
+    if (ticks === 14) onScanLog("  → 使用账号 账号244202754 (uid=244202754, 官服)");
+    if (ticks === 16) {
+      onScanLog("抢码成功! ticket=demo3f9a12bc4d5e6f7a8b9c0d1e2f3a4b 账号=账号244202754");
+      clearInterval(demo); demo = null;
+      onScanDone("抢码成功: 账号244202754");
+    }
+  }, 1000);
+}
+function stopDemoScan() {
+  if (demo) { clearInterval(demo); demo = null; }
+  stopRuntimeTicker();
+  setScanState("idle");
+  addLog("SYSTEM", "扫描已停止");
+}
+
+/* ============================================================
+   绑定
+   ============================================================ */
+function switchPlatform(p) {
+  state.platform = p;
+  document.querySelectorAll("#platform-seg button").forEach((b) => {
+    const on = b.dataset.platform === p;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  $("platform-badge").textContent = p === "bili" ? "B站" : "抖音";
+  $("rid-input").placeholder = p === "bili" ? "输入 B 站直播间号" : "输入抖音直播间号";
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  }
+  return Promise.resolve(fallbackCopy(text));
+}
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); } catch (e) { /* noop */ }
+  ta.remove();
+}
+
+function toast(msg, isErr) {
+  const el = h("div", "toast" + (isErr ? " err" : ""));
+  el.appendChild(svgIcon(isErr ? "i-alert" : "i-check", "icon"));
+  el.appendChild(h("span", "", msg));
+  $("toasts").appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity .2s";
+    el.style.opacity = "0";
+    setTimeout(() => el.remove(), 220);
+  }, 2200);
+}
+
+/* ============================================================
+   接线
+   ============================================================ */
+async function wire() {
+  if (DEMO) document.body.classList.add("is-demo");
+
+  $("platform-seg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-platform]");
+    if (btn) switchPlatform(btn.dataset.platform);
+  });
+  $("rid-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); toggleScan(); }
+  });
+  $("log-body").addEventListener("scroll", () => {
+    const body = $("log-body");
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+    state.autoScroll = atBottom;
+    $("to-bottom").classList.toggle("show", !atBottom && body.scrollHeight > body.clientHeight + 40);
+  });
+  window.addEventListener("keydown", (e) => {
+    const typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable);
+    if (e.code === "Escape" && state.login.open) { e.preventDefault(); closeLogin(); return; }
+    if (e.code === "Space" && !typing && !state.login.open) { e.preventDefault(); toggleScan(); }
+  });
+
+  addLog("SYSTEM", "控制台就绪 · 引擎 openh264 + rxing");
+  addLog("SYSTEM", DEMO ? "演示模式：未连接本地引擎，启动后会模拟扫描流程" : "已连接本地引擎，等待启动扫描");
+  setScanState("idle");
+  renderAccounts();
+
+  if (!IN_TAURI) return;
+
+  await listen("scan-log", (e) => onScanLog(e.payload));
+  await listen("scan-done", (e) => onScanDone(e.payload));
+  await listen("login-qr", (e) => onQr(e.payload));
+  await listen("login-qr-text", (e) => console.debug("qr text", e.payload));
+  await listen("login-status", (e) => onLoginStatus(e.payload));
+  await listen("login-done", (e) => onLoginDone(e.payload));
+  await loadAccounts();
+}
+
+const ui = {
+  openLogin, closeLogin, switchLogin,
+  toggleScan, clearFeed, clearLogs, exportLogs,
+  filterLogs, searchLogs, scrollLogsToBottom,
+};
+window.ui = ui;
+
+wire();
+</script>
 </body>
 </html>
