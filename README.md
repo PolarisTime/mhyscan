@@ -29,7 +29,8 @@
     `MHYSCAN_DOUYIN_COOKIE` 或 `Config/douyin_cookie.txt`
 - 多账号/单账号抢码、连接预热
 - 匿名遥测（可关闭，自建 Cloudflare Worker + D1）
-- 可选 Tauri 桌面端（`tauri-app/`，HTML 设计稿）
+- 可选 Tauri 桌面端（`tauri-app/`）：深色 / 浅色主题（顶栏按钮切换，选择会记忆）
+- Windows 安装包使用 NSIS（简体中文），不再同时发布 MSI，避免两套安装器互相要求卸载
 
 ## 安装 / 构建
 
