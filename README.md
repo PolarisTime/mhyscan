@@ -70,7 +70,8 @@ mhyscan scan 6 --timeout 600
 |---|---|---|
 | `MHYSCAN_CONFIG` | 账号库路径 | `Config/userinfo.json` |
 | `MHYSCAN_CONFIRM_DELAY_MS` | scan→confirm 等待 | `250` |
-| `MHYSCAN_TELEMETRY_URL` | 遥测端点（不设=关闭） | — |
+| `MHYSCAN_TELEMETRY_URL` | 事件端点，如 `https://api.example/v1/events`（不设=关闭） | — |
+| `MHYSCAN_TELEMETRY_SESSION_URL` | 会话端点（默认由事件端点推导 `/sessions`） | — |
 | `MHYSCAN_TELEMETRY_AUTH` / `_KEY` | HMAC / AES 密钥 | — |
 | `MHYSCAN_TELEMETRY_INTERVAL` | 定时上报间隔(s) | `300` |
 | `MHYSCAN_TELEMETRY=0` / `DO_NOT_TRACK=1` | 关闭遥测 | — |
@@ -81,7 +82,8 @@ mhyscan scan 6 --timeout 600
 
 `server/` 为 Cloudflare Worker + D1（RESTful）：
 
-- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip，成功 202）
+- `POST /v1/sessions` 换取短效会话 token（HMAC 签名 + 每 install 限流）
+- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip + Bearer token，成功 202；超配额 429）
 - `GET /v1/health` 健康检查（含 D1 探测与版本/commit；异常返回 503）
 - `GET /v1/stats?days=1..365` 聚合概览（可选 `STATS_TOKEN` 鉴权）
 - 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理

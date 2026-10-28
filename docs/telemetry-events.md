@@ -1,13 +1,17 @@
 # mhyscan 遥测事件数据字典
 
 - `schema_version`: **1**（只增字段不改语义；破坏性变更才升版本）
-- 上报接口：`POST /v1/events`
+- 会话接口：`POST /v1/sessions`（HMAC 签名，body `{"install_id":"<32 hex>"}`）→ `201` `{token, token_type:"Bearer", expires_in}`
+- 上报接口：`POST /v1/events`（必须带 `Authorization: Bearer <token>`）
 - 上报格式：`nonce(12B) || AES-256-GCM( gzip( JSON ) )`，body 为单个事件对象或事件数组
 - 鉴权：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
 - 请求头：`Content-Type: application/octet-stream`、`Accept: application/json`
 - 成功响应：`202 Accepted`，body `{ "accepted": n, "rejected": n }`
 - 错误响应：RFC 9457 `application/problem+json`（`type/title/status/detail/instance`）
-- 状态码：401 签名/时钟、400 解密/解压/JSON、413 体积、415 Content-Type、422 批量条数、503 依赖不可用
+- 状态码：401 签名/时钟/token、400 解密/解压/JSON、403 token 与 install_id 不匹配、413 体积、415 Content-Type、422 批量条数、429 超配额、503 依赖不可用
+- 防刷：会话 token 有效期 `TOKEN_TTL`（默认 1800s）；每 install_id 每分钟配额
+  `RATE_LIMIT_PER_MIN`（事件，默认 600）与 `RATE_LIMIT_SESSIONS_PER_MIN`（会话，默认 10）；
+  超限返回 429 + `Retry-After`
 
 ## 信封字段（每个事件都带）
 

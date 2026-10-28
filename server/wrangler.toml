@@ -4,7 +4,7 @@ compatibility_date = "2025-01-01"
 
 # 原始事件保留天数（清理与聚合使用）
 [vars]
-SERVICE_VERSION = "0.1.0"
+SERVICE_VERSION = "0.2.1"
 RETENTION_DAYS = "90"
 # 允许的时间戳偏移（秒），防重放
 CLOCK_SKEW = "300"

@@ -41,6 +41,7 @@ pub struct Telemetry {
 struct Inner {
     http: reqwest::Client,
     url: String,
+    session_url: String,
     auth: Option<String>,
     enc_key: Option<Vec<u8>>,
     install_id: String,
@@ -48,6 +49,8 @@ struct Inner {
     queue: Mutex<Vec<Value>>,
     /// 串行化 flush，避免启动/退出/定时并发重复上报
     flush_lock: tokio::sync::Mutex<()>,
+    /// 会话 token 缓存：(token, 过期时间戳)
+    token: Mutex<Option<(String, u64)>>,
 }
 
 impl Telemetry {
@@ -76,6 +79,7 @@ impl Telemetry {
         Some(Self {
             inner: Arc::new(Inner {
                 http,
+                session_url: session_url_from(&url),
                 url,
                 auth,
                 enc_key,
@@ -83,9 +87,43 @@ impl Telemetry {
                 session_id: random_hex(16),
                 queue: Mutex::new(Vec::new()),
                 flush_lock: tokio::sync::Mutex::new(()),
+                token: Mutex::new(None),
             }),
             interval: Duration::from_secs(interval),
         })
+    }
+
+    /// 取会话 token（缓存优先，过期前 30s 刷新）
+    pub async fn ensure_token(&self) -> anyhow::Result<String> {
+        if let Some((token, exp)) = self.inner.token.lock().unwrap().clone() {
+            if exp > now_secs() + 30 {
+                return Ok(token);
+            }
+        }
+        let body = serde_json::to_vec(&json!({ "install_id": self.inner.install_id }))?;
+        let mut req = self
+            .inner
+            .http
+            .post(&self.inner.session_url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .body(body.clone());
+        if let Some((ts, sig)) = sign_headers(self.inner.auth.as_deref(), &body) {
+            req = req.header("X-Ts", ts).header("X-Sign", sig);
+        }
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("会话申请失败: HTTP {}", resp.status());
+        }
+        let v: Value = resp.json().await?;
+        let token = v
+            .get("token")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("会话响应缺少 token"))?
+            .to_string();
+        let ttl = v.get("expires_in").and_then(Value::as_u64).unwrap_or(1800);
+        *self.inner.token.lock().unwrap() = Some((token.clone(), now_secs() + ttl));
+        Ok(token)
     }
 
     /// 入队一个事件（不发送）
@@ -156,14 +194,35 @@ impl Telemetry {
                 q.iter().take(MAX_BATCH).cloned().collect()
             };
             let count = snapshot.len();
-            send(
+            let token = self.ensure_token().await?;
+            let payload = Value::Array(snapshot.clone());
+            match send(
                 &self.inner.http,
                 &self.inner.url,
                 self.inner.auth.as_deref(),
                 self.inner.enc_key.as_deref(),
-                Value::Array(snapshot.clone()),
+                Some(&token),
+                payload.clone(),
             )
-            .await?;
+            .await
+            {
+                Ok(()) => {}
+                Err(e) if e.to_string().contains("HTTP 401") => {
+                    // token 过期/被吊销：清缓存后重取一次
+                    *self.inner.token.lock().unwrap() = None;
+                    let token = self.ensure_token().await?;
+                    send(
+                        &self.inner.http,
+                        &self.inner.url,
+                        self.inner.auth.as_deref(),
+                        self.inner.enc_key.as_deref(),
+                        Some(&token),
+                        payload,
+                    )
+                    .await?;
+                }
+                Err(e) => return Err(e),
+            }
 
             let sent: HashSet<String> = snapshot
                 .iter()
@@ -276,6 +335,7 @@ async fn send(
     url: &str,
     auth: Option<&str>,
     key: Option<&[u8]>,
+    token: Option<&str>,
     payload: Value,
 ) -> anyhow::Result<()> {
     let raw = serde_json::to_vec(&payload)?;
@@ -316,12 +376,10 @@ async fn send(
         .header("Accept", "application/json")
         .header("X-Install-Id", install);
 
-    if let Some(auth) = auth {
-        let ts = now_secs().to_string();
-        let mut mac = Hmac::<Sha256>::new_from_slice(auth.as_bytes())?;
-        mac.update(ts.as_bytes());
-        mac.update(&body);
-        let sig = hex::encode(mac.finalize().into_bytes());
+    if let Some(token) = token {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    if let Some((ts, sig)) = sign_headers(auth, &body) {
         req = req.header("X-Ts", ts).header("X-Sign", sig);
     }
 
@@ -330,6 +388,31 @@ async fn send(
         anyhow::bail!("HTTP {}", resp.status());
     }
     Ok(())
+}
+
+/// HMAC 请求签名头：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
+fn sign_headers(auth: Option<&str>, body: &[u8]) -> Option<(String, String)> {
+    let auth = auth?;
+    let ts = now_secs().to_string();
+    let mut mac = Hmac::<Sha256>::new_from_slice(auth.as_bytes()).ok()?;
+    mac.update(ts.as_bytes());
+    mac.update(body);
+    Some((ts, hex::encode(mac.finalize().into_bytes())))
+}
+
+/// 由事件上报 URL 推导会话申请 URL（可用 MHYSCAN_TELEMETRY_SESSION_URL 覆盖）
+fn session_url_from(events_url: &str) -> String {
+    if let Ok(url) = std::env::var("MHYSCAN_TELEMETRY_SESSION_URL") {
+        let url = url.trim();
+        if !url.is_empty() {
+            return url.to_string();
+        }
+    }
+    let base = events_url.trim_end_matches('/');
+    match base.strip_suffix("/events") {
+        Some(prefix) => format!("{prefix}/sessions"),
+        None => format!("{base}/sessions"),
+    }
 }
 
 fn spool_path() -> PathBuf {
@@ -433,12 +516,14 @@ impl Telemetry {
             inner: Arc::new(Inner {
                 http,
                 url: "http://127.0.0.1:9/collect".to_string(),
+                session_url: "http://127.0.0.1:9/sessions".to_string(),
                 auth: None,
                 enc_key: None,
                 install_id: "test-install".to_string(),
                 session_id: "test-session".to_string(),
                 queue: Mutex::new(Vec::new()),
                 flush_lock: tokio::sync::Mutex::new(()),
+                token: Mutex::new(None),
             }),
             interval: Duration::from_secs(10),
         }
@@ -446,6 +531,10 @@ impl Telemetry {
 
     fn queue_len(&self) -> usize {
         self.inner.queue.lock().unwrap().len()
+    }
+
+    fn set_token_for_test(&self, token: &str, exp: u64) {
+        *self.inner.token.lock().unwrap() = Some((token.to_string(), exp));
     }
 
     fn snapshot(&self) -> Vec<Value> {
@@ -500,6 +589,29 @@ mod tests {
         assert!(!path.exists(), "读取后应删除 spool 文件");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn session_url_derivation() {
+        assert_eq!(
+            session_url_from("https://api.example.com/v1/events"),
+            "https://api.example.com/v1/sessions"
+        );
+        assert_eq!(
+            session_url_from("https://api.example.com/v1/events/"),
+            "https://api.example.com/v1/sessions"
+        );
+        assert_eq!(
+            session_url_from("https://api.example.com/collect"),
+            "https://api.example.com/collect/sessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn token_cache_hit_avoids_network() {
+        let t = Telemetry::for_test();
+        t.set_token_for_test("cached-token", now_secs() + 600);
+        assert_eq!(t.ensure_token().await.unwrap(), "cached-token");
     }
 
     #[test]

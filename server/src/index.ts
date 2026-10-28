@@ -24,6 +24,14 @@ interface Env {
   /// 部署版本与提交（wrangler vars / --var 注入）
   SERVICE_VERSION?: string;
   GIT_SHA?: string;
+  /// 会话 token 签名密钥（缺省回退 TELEMETRY_AUTH）
+  SESSION_KEY?: string;
+  /// token 有效期（秒，默认 1800）
+  TOKEN_TTL?: string;
+  /// 每 install_id 每分钟事件配额（默认 600）
+  RATE_LIMIT_PER_MIN?: string;
+  /// 每 install_id 每分钟会话配额（默认 10）
+  RATE_LIMIT_SESSIONS_PER_MIN?: string;
 }
 
 interface TelemetryEvent {
@@ -77,6 +85,7 @@ export default {
 
     // 资源 → 允许的方法（仅 /v1，无兼容别名）
     const routes: Record<string, string[]> = {
+      [`${BASE}/sessions`]: ["POST"],
       [`${BASE}/events`]: ["POST"],
       [`${BASE}/health`]: ["GET", "HEAD"],
       [`${BASE}/stats`]: ["GET", "HEAD"],
@@ -94,6 +103,7 @@ export default {
     }
 
     if (path === `${BASE}/health`) return health(request, env);
+    if (path === `${BASE}/sessions`) return createSession(request, env);
     if (path === `${BASE}/events`) {
       const ct = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
       if (ct !== "application/octet-stream") {
@@ -126,6 +136,11 @@ export default {
     await env.DB.prepare(`DELETE FROM events WHERE ts < unixepoch('now', ?)`)
       .bind(`-${retention} day`)
       .run();
+
+    // 清理过期的限流计数（只保留最近 1 小时）
+    await env.DB.prepare(
+      `DELETE FROM rate_limits WHERE window_start < unixepoch('now', '-1 hour')`,
+    ).run();
   },
 } satisfies ExportedHandler<Env>;
 
@@ -135,6 +150,7 @@ function index(): Response {
       service: "mhyscan-telemetry",
       version: API_VERSION,
       endpoints: {
+        sessions: { method: "POST", path: `${BASE}/sessions`, media_type: "application/json" },
         events: { method: "POST", path: `${BASE}/events`, media_type: "application/octet-stream" },
         health: { method: "GET", path: `${BASE}/health` },
         stats: { method: "GET", path: `${BASE}/stats`, query: { days: "1..365, default 60" } },
@@ -154,6 +170,147 @@ function statsAuth(request: Request, env: Env): Response | null {
     });
   }
   return null;
+}
+
+function sessionKey(env: Env): string {
+  return env.SESSION_KEY || env.TELEMETRY_AUTH || "";
+}
+
+async function hmacHex(key: string, data: Uint8Array): Promise<string> {
+  const k = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", k, data);
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function b64url(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlDecode(s: string): Uint8Array {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  const raw = atob(b64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+async function issueSession(installId: string, env: Env): Promise<{ token: string; expires_in: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = parseInt(env.TOKEN_TTL || "1800", 10);
+  const payload = b64url(
+    new TextEncoder().encode(JSON.stringify({ sub: installId, iat: now, exp: now + ttl })),
+  );
+  const sig = await hmacHex(sessionKey(env), new TextEncoder().encode(payload));
+  return { token: `${payload}.${sig}`, expires_in: ttl };
+}
+
+async function verifySession(token: string, env: Env): Promise<{ sub: string } | null> {
+  const parts = token.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const [payload, sig] = parts;
+  const expected = await hmacHex(sessionKey(env), new TextEncoder().encode(payload));
+  if (expected !== sig.toLowerCase()) return null;
+  try {
+    const data = JSON.parse(new TextDecoder().decode(b64urlDecode(payload))) as {
+      sub?: string;
+      iat?: number;
+      exp?: number;
+    };
+    const now = Math.floor(Date.now() / 1000);
+    if (typeof data.sub !== "string" || !data.sub) return null;
+    if (typeof data.exp !== "number" || data.exp < now) return null;
+    if (typeof data.iat !== "number" || data.iat > now + 300) return null;
+    return { sub: data.sub };
+  } catch {
+    return null;
+  }
+}
+
+async function bumpRate(
+  env: Env,
+  bucket: string,
+  cost: number,
+  limit: number,
+): Promise<{ allowed: boolean; retryAfter: number }> {
+  const now = Math.floor(Date.now() / 1000);
+  const windowStart = now - (now % 60);
+  await env.DB.prepare(
+    `INSERT INTO rate_limits (bucket, window_start, count) VALUES (?, ?, ?)
+       ON CONFLICT(bucket, window_start) DO UPDATE SET count = count + excluded.count`,
+  )
+    .bind(bucket, windowStart, cost)
+    .run();
+  const row = await env.DB.prepare(
+    `SELECT count FROM rate_limits WHERE bucket = ? AND window_start = ?`,
+  )
+    .bind(bucket, windowStart)
+    .first<{ count: number }>();
+  const count = Number(row?.count ?? cost);
+  return { allowed: count <= limit, retryAfter: 60 - (now % 60) };
+}
+
+async function createSession(request: Request, env: Env): Promise<Response> {
+  const auth = await readSignedBody(request, env);
+  if ("error" in auth) return auth.error;
+
+  let installId = "";
+  try {
+    const body = JSON.parse(new TextDecoder().decode(auth.body)) as { install_id?: string };
+    installId = String(body.install_id || "");
+  } catch {
+    return problem(400, "Bad Request", "body 必须是 JSON {install_id}");
+  }
+  if (!/^[0-9a-f]{32}$/i.test(installId)) {
+    return problem(422, "Unprocessable Content", "install_id 必须是 32 位 hex", "/v1/sessions");
+  }
+
+  const limit = parseInt(env.RATE_LIMIT_SESSIONS_PER_MIN || "10", 10);
+  const rate = await bumpRate(env, `sessions:${installId}`, 1, limit);
+  if (!rate.allowed) {
+    return problem(429, "Too Many Requests", `会话请求超过 ${limit} 次/分钟`, "/v1/sessions", {
+      "retry-after": String(rate.retryAfter),
+    });
+  }
+
+  const session = await issueSession(installId, env);
+  return new Response(JSON.stringify({ token_type: "Bearer", ...session }), {
+    status: 201,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+}
+
+async function readSignedBody(
+  request: Request,
+  env: Env,
+): Promise<{ body: Uint8Array } | { error: Response }> {
+  const tsHeader = request.headers.get("X-Ts");
+  const signHeader = request.headers.get("X-Sign");
+  if (!tsHeader || !signHeader) {
+    return { error: problem(401, "Unauthorized", "缺少 X-Ts / X-Sign") };
+  }
+  const ts = parseInt(tsHeader, 10);
+  const skew = parseInt(env.CLOCK_SKEW || "300", 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(ts) || Math.abs(now - ts) > skew) {
+    return { error: problem(401, "Unauthorized", "时间戳超出允许的时钟偏移") };
+  }
+  const body = new Uint8Array(await request.arrayBuffer());
+  if (body.length === 0 || body.length > 64 * 1024) {
+    return { error: problem(413, "Payload Too Large", "body 必须为 1B..64KB") };
+  }
+  if (!(await verifyHmac(tsHeader, body, signHeader, env.TELEMETRY_AUTH))) {
+    return { error: problem(401, "Unauthorized", "HMAC 验签失败") };
+  }
+  return { body };
 }
 
 async function health(request: Request, env: Env): Promise<Response> {
@@ -187,25 +344,24 @@ async function health(request: Request, env: Env): Promise<Response> {
 }
 
 async function collect(request: Request, env: Env): Promise<Response> {
-  const tsHeader = request.headers.get("X-Ts");
-  const signHeader = request.headers.get("X-Sign");
-  if (!tsHeader || !signHeader) return problem(401, "Unauthorized", "缺少 X-Ts / X-Sign");
+  // 1) 请求签名（时钟窗口 + HMAC）
+  const auth = await readSignedBody(request, env);
+  if ("error" in auth) return auth.error;
+  const body = auth.body;
 
-  const ts = parseInt(tsHeader, 10);
-  const skew = parseInt(env.CLOCK_SKEW || "300", 10);
-  const now = Math.floor(Date.now() / 1000);
-  if (!Number.isFinite(ts) || Math.abs(now - ts) > skew) {
-    return problem(401, "Unauthorized", "时间戳超出允许的时钟偏移");
+  // 2) 会话 token（客户端启动时换取，短有效期）
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
+  if (!bearer) {
+    return problem(401, "Unauthorized", "缺少 Bearer token", "/v1/events", {
+      "www-authenticate": 'Bearer realm="events"',
+    });
   }
-
-  const body = new Uint8Array(await request.arrayBuffer());
-  if (body.length === 0 || body.length > 64 * 1024) {
-    return problem(413, "Payload Too Large", "body 必须为 1B..64KB");
+  const session = await verifySession(bearer, env);
+  if (!session) {
+    return problem(401, "Unauthorized", "会话 token 无效或已过期", "/v1/events", {
+      "www-authenticate": 'Bearer realm="events"',
+    });
   }
-
-  // 1) HMAC 验签
-  const ok = await verifyHmac(tsHeader, body, signHeader, env.TELEMETRY_AUTH);
-  if (!ok) return problem(401, "Unauthorized", "HMAC 验签失败");
 
   // 2) AES-256-GCM 解密
   let plain: Uint8Array;
@@ -235,6 +391,23 @@ async function collect(request: Request, env: Env): Promise<Response> {
     return problem(422, "Unprocessable Content", "批量条数必须为 1..256");
   }
 
+  // token 必须与事件 install_id 一致（防止拿 A 的 token 上报 B 的数据）
+  const mismatched = list.some((raw) => {
+    const ev = raw as TelemetryEvent | null;
+    return !!ev && typeof ev.install_id === "string" && ev.install_id !== session.sub;
+  });
+  if (mismatched) return problem(403, "Forbidden", "token 与 install_id 不匹配");
+
+  // 按 install_id 的每分钟配额
+  const limit = parseInt(env.RATE_LIMIT_PER_MIN || "600", 10);
+  const rate = await bumpRate(env, `events:${session.sub}`, list.length, limit);
+  if (!rate.allowed) {
+    return problem(429, "Too Many Requests", `事件上报超过 ${limit} 条/分钟`, "/v1/events", {
+      "retry-after": String(rate.retryAfter),
+    });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
   const ipPrefix = truncateIp(request.headers.get("CF-Connecting-IP") || "");
 
   let accepted = 0;
