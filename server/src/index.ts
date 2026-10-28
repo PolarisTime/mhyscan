@@ -1,10 +1,9 @@
 /**
  * mhyscan 遥测接收 Worker (Cloudflare 免费套餐)
  *
- * 客户端上传: Content-Type: application/octet-stream
- *   body = nonce(12B) || AES-256-GCM( gzip( JSON event ) )
- *   header X-Ts   = unix 秒
- *   header X-Sign = hex( HMAC-SHA256( X-Ts || body, TELEMETRY_AUTH ) )
+ * 客户端上传: Content-Type: application/json, Content-Encoding: gzip
+ *   Authorization: Bearer <session token>（/v1/sessions 签发，服务端 SESSION_KEY 签名）
+ *   客户端不持有任何共享密钥
  *
  * 路由:
  *   POST /v1/events 接收事件
@@ -15,16 +14,13 @@
 
 interface Env {
   DB: D1Database;
-  TELEMETRY_AUTH: string;
-  TELEMETRY_KEY: string;
   RETENTION_DAYS: string;
-  CLOCK_SKEW: string;
   /// 可选：设置后 /stats 需要 ?token= 或 Authorization: Bearer
   STATS_TOKEN?: string;
   /// 部署版本与提交（wrangler vars / --var 注入）
   SERVICE_VERSION?: string;
   GIT_SHA?: string;
-  /// 会话 token 签名密钥（缺省回退 TELEMETRY_AUTH）
+  /// 会话 token 签名密钥（仅服务端持有；未配置则会话/上报不可用）
   SESSION_KEY?: string;
   /// token 有效期（秒，默认 1800）
   TOKEN_TTL?: string;
@@ -109,8 +105,8 @@ export default {
     if (path === `${BASE}/sessions`) return createSession(request, env);
     if (path === `${BASE}/events`) {
       const ct = request.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
-      if (ct !== "application/octet-stream") {
-        return problem(415, "Unsupported Media Type", "Content-Type 必须为 application/octet-stream", path);
+      if (ct !== "application/json") {
+        return problem(415, "Unsupported Media Type", "Content-Type 必须为 application/json", path);
       }
       return collect(request, env);
     }
@@ -185,7 +181,20 @@ function statsAuth(request: Request, env: Env, path = "/v1/stats"): Response | n
 }
 
 function sessionKey(env: Env): string {
-  return env.SESSION_KEY || env.TELEMETRY_AUTH || "";
+  return env.SESSION_KEY || "";
+}
+
+async function hmacVerifyHex(key: string, data: Uint8Array, sigHex: string): Promise<boolean> {
+  const k = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  const sig = hexToBytes(sigHex);
+  if (!sig) return false;
+  return crypto.subtle.verify("HMAC", k, sig, data);
 }
 
 async function hmacHex(key: string, data: Uint8Array): Promise<string> {
@@ -226,11 +235,12 @@ async function issueSession(installId: string, env: Env): Promise<{ token: strin
 }
 
 async function verifySession(token: string, env: Env): Promise<{ sub: string } | null> {
+  const key = sessionKey(env);
+  if (!key) return null;
   const parts = token.split(".");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
   const [payload, sig] = parts;
-  const expected = await hmacHex(sessionKey(env), new TextEncoder().encode(payload));
-  if (expected !== sig.toLowerCase()) return null;
+  if (!(await hmacVerifyHex(key, new TextEncoder().encode(payload), sig))) return null;
   try {
     const data = JSON.parse(new TextDecoder().decode(b64urlDecode(payload))) as {
       sub?: string;
@@ -271,12 +281,16 @@ async function bumpRate(
 }
 
 async function createSession(request: Request, env: Env): Promise<Response> {
-  const auth = await readSignedBody(request, env);
-  if ("error" in auth) return auth.error;
-
+  if (!sessionKey(env)) {
+    return problem(503, "Service Unavailable", "服务端未配置 SESSION_KEY", "/v1/sessions");
+  }
+  const raw = new Uint8Array(await request.arrayBuffer());
+  if (raw.length === 0 || raw.length > 4096) {
+    return problem(413, "Payload Too Large", "body 必须为 1B..4KB");
+  }
   let installId = "";
   try {
-    const body = JSON.parse(new TextDecoder().decode(auth.body)) as { install_id?: string };
+    const body = JSON.parse(new TextDecoder().decode(raw)) as { install_id?: string };
     installId = String(body.install_id || "");
   } catch {
     return problem(400, "Bad Request", "body 必须是 JSON {install_id}");
@@ -310,31 +324,6 @@ async function createSession(request: Request, env: Env): Promise<Response> {
   });
 }
 
-async function readSignedBody(
-  request: Request,
-  env: Env,
-): Promise<{ body: Uint8Array } | { error: Response }> {
-  const tsHeader = request.headers.get("X-Ts");
-  const signHeader = request.headers.get("X-Sign");
-  if (!tsHeader || !signHeader) {
-    return { error: problem(401, "Unauthorized", "缺少 X-Ts / X-Sign") };
-  }
-  const ts = parseInt(tsHeader, 10);
-  const skew = parseInt(env.CLOCK_SKEW || "300", 10);
-  const now = Math.floor(Date.now() / 1000);
-  if (!Number.isFinite(ts) || Math.abs(now - ts) > skew) {
-    return { error: problem(401, "Unauthorized", "时间戳超出允许的时钟偏移") };
-  }
-  const body = new Uint8Array(await request.arrayBuffer());
-  if (body.length === 0 || body.length > 64 * 1024) {
-    return { error: problem(413, "Payload Too Large", "body 必须为 1B..64KB") };
-  }
-  if (!(await verifyHmac(tsHeader, body, signHeader, env.TELEMETRY_AUTH))) {
-    return { error: problem(401, "Unauthorized", "HMAC 验签失败") };
-  }
-  return { body };
-}
-
 async function health(request: Request, env: Env): Promise<Response> {
   const started = Date.now();
   let dbOk = false;
@@ -360,12 +349,7 @@ async function health(request: Request, env: Env): Promise<Response> {
 }
 
 async function collect(request: Request, env: Env): Promise<Response> {
-  // 1) 请求签名（时钟窗口 + HMAC）
-  const auth = await readSignedBody(request, env);
-  if ("error" in auth) return auth.error;
-  const body = auth.body;
-
-  // 2) 会话 token（客户端启动时换取，短有效期）
+  // 1) 会话 token（客户端启动时换取，服务端签发）
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
   if (!bearer) {
     return problem(401, "Unauthorized", "缺少 Bearer token", "/v1/events", {
@@ -379,23 +363,22 @@ async function collect(request: Request, env: Env): Promise<Response> {
     });
   }
 
-  // 2) AES-256-GCM 解密
-  let plain: Uint8Array;
-  try {
-    plain = await decrypt(body, env.TELEMETRY_KEY);
-  } catch {
-    return problem(400, "Bad Request", "AES-256-GCM 解密失败");
+  // 2) 读取 body（gzip 可选）
+  const body = new Uint8Array(await request.arrayBuffer());
+  if (body.length === 0 || body.length > 64 * 1024) {
+    return problem(413, "Payload Too Large", "body 必须为 1B..64KB");
   }
-
-  // 3) gzip 解压
   let text: string;
   try {
-    text = await gunzip(plain);
+    text =
+      request.headers.get("content-encoding")?.toLowerCase() === "gzip"
+        ? await gunzip(body)
+        : new TextDecoder().decode(body);
   } catch {
     return problem(400, "Bad Request", "gzip 解压失败");
   }
 
-  // 4) 解析（兼容单条对象或数组批量）并入库
+  // 3) 解析（兼容单条对象或数组批量）并入库
   let data: unknown;
   try {
     data = JSON.parse(text);
@@ -625,30 +608,6 @@ async function stats(request: Request, env: Env, url: URL): Promise<Response> {
 }
 
 /* ---------------- crypto helpers ---------------- */
-
-async function verifyHmac(ts: string, body: Uint8Array, sigHex: string, auth: string): Promise<boolean> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(auth),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["verify"]
-  );
-  const data = concat(new TextEncoder().encode(ts), body);
-  const sig = hexToBytes(sigHex);
-  if (!sig) return false;
-  return crypto.subtle.verify("HMAC", key, sig, data);
-}
-
-async function decrypt(framed: Uint8Array, keyHex: string): Promise<Uint8Array> {
-  const keyBytes = hexToBytes(keyHex);
-  if (!keyBytes || keyBytes.length !== 32) throw new Error("bad key");
-  const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
-  const iv = framed.slice(0, 12);
-  const ct = framed.slice(12);
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
-  return new Uint8Array(plain);
-}
 
 async function gunzip(data: Uint8Array): Promise<string> {
   const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("gzip"));

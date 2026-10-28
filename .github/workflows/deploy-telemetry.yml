@@ -24,8 +24,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          TELEMETRY_AUTH: ${{ secrets.TELEMETRY_AUTH }}
-          TELEMETRY_KEY: ${{ secrets.TELEMETRY_KEY }}
           SESSION_KEY: ${{ secrets.SESSION_KEY }}
           STATS_TOKEN: ${{ secrets.STATS_TOKEN }}
         run: |
@@ -36,8 +34,6 @@ jobs:
               echo "skip $1 (not configured)"
             fi
           }
-          sync_secret TELEMETRY_AUTH "$TELEMETRY_AUTH"
-          sync_secret TELEMETRY_KEY "$TELEMETRY_KEY"
           sync_secret SESSION_KEY "$SESSION_KEY"
           sync_secret STATS_TOKEN "$STATS_TOKEN"
       - name: Apply D1 migrations

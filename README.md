@@ -73,7 +73,6 @@ mhyscan scan 6 --timeout 600
 | `MHYSCAN_CONFIRM_DELAY_MS` | scan→confirm 等待 | `250` |
 | `MHYSCAN_TELEMETRY_URL` | 事件端点，如 `https://api.example/v1/events`（不设=关闭） | — |
 | `MHYSCAN_TELEMETRY_SESSION_URL` | 会话端点（默认由事件端点推导 `/sessions`） | — |
-| `MHYSCAN_TELEMETRY_AUTH` / `_KEY` | HMAC / AES 密钥 | — |
 | `MHYSCAN_TELEMETRY_INTERVAL` | 定时上报间隔(s) | `300` |
 | `MHYSCAN_TELEMETRY=0` / `DO_NOT_TRACK=1` | 关闭遥测 | — |
 | `MHYSCAN_CONFIG_DIR` | 配置目录（install_id / spool 存放位置） | 平台标准目录 |
@@ -83,15 +82,15 @@ mhyscan scan 6 --timeout 600
 
 `server/` 为 Cloudflare Worker + D1（RESTful）：
 
-- `POST /v1/sessions` 换取短效会话 token（HMAC 签名 + 每 install 限流）
-- `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip + Bearer token，成功 202；超配额 429）
-- `GET /v1/health` 健康检查（含 D1 探测与版本/commit；异常返回 503）
+- `POST /v1/sessions` 换取短效会话 token（无需签名；每 install + 每 IP 限流）
+- `POST /v1/events` 接收（gzip JSON + Bearer token，成功 202；超配额 429）
+- `GET /v1/health` 存活探针（仅 status/service/time/checks.db；异常 503）
 - `GET /v1/stats?days=1..365` 聚合概览（**必须** `STATS_TOKEN`，未配置 403）
 - 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理
 
 CLI 与 GUI 都会在启动/定时/退出时上报。发布版默认开启：仓库变量/密钥
-`TELEMETRY_URL` / `TELEMETRY_AUTH` / `TELEMETRY_KEY` 会在构建时内嵌进二进制，
-同时 `deploy-telemetry` 会把同名 secret 同步到 Worker，保证两端一致。
+`TELEMETRY_URL` 会在构建时内嵌进二进制；会话 token 由 Worker 用仅服务端持有的
+`SESSION_KEY` 签发（`deploy-telemetry` 负责同步），客户端不携带任何密钥。
 运行时可用 `DO_NOT_TRACK=1` 或 `MHYSCAN_TELEMETRY=0` 关闭；未配置则遥测关闭。见 `docs/telemetry-events.md`。
 
 部署：
@@ -99,8 +98,8 @@ CLI 与 GUI 都会在启动/定时/退出时上报。发布版默认开启：仓
 cd server && npm install
 npx wrangler d1 create mhyscan_telemetry     # 填入 database_id
 npx wrangler d1 execute mhyscan_telemetry --remote --file=./schema.sql
-npx wrangler secret put TELEMETRY_AUTH
-npx wrangler secret put TELEMETRY_KEY
+npx wrangler secret put SESSION_KEY     # 会话 token 签名（仅服务端）
+npx wrangler secret put STATS_TOKEN     # 可选：开启 /v1/stats
 npx wrangler deploy
 ```
 

@@ -2,11 +2,12 @@
 
 - `schema_version`: **1**（只增字段不改语义；破坏性变更才升版本）
 - 构建期默认值：发布流水线可通过 `MHYSCAN_TELEMETRY_URL/_AUTH/_KEY` 环境变量把配置内嵌进二进制；运行时环境变量优先
-- 会话接口：`POST /v1/sessions`（HMAC 签名，body `{"install_id":"<32 hex>"}`）→ `201` `{token, token_type:"Bearer", expires_in}`
-- 上报接口：`POST /v1/events`（必须带 `Authorization: Bearer <token>`）
-- 上报格式：`nonce(12B) || AES-256-GCM( gzip( JSON ) )`，body 为单个事件对象或事件数组
-- 鉴权：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
-- 请求头：`Content-Type: application/octet-stream`、`Accept: application/json`
+- 会话接口：`POST /v1/sessions`，body `{"install_id":"<32 hex>"}` → `201` `{token, token_type:"Bearer", expires_in}`（客户端无需签名）
+- 上报接口：`POST /v1/events`，必须带 `Authorization: Bearer <token>`
+- 上报格式：`gzip( JSON )`（单条或数组），`Content-Encoding: gzip` 可选
+- 请求头：`Content-Type: application/json`、`Accept: application/json`
+- **客户端不持有任何共享密钥**：token 由服务端用 `SESSION_KEY` 签发，`SESSION_KEY` 只存在于 Worker，
+  轮换它即可吊销全部旧 token；滥用防护靠每 IP/每 install 限流、体积与批量上限
 - 成功响应：`202 Accepted`，body `{ "accepted": n, "rejected": n }`
 - 错误响应：RFC 9457 `application/problem+json`（`type/title/status/detail/instance`）
 - 状态码：401 签名/时钟/token、400 解密/解压/JSON、403 token 与 install_id 不匹配、413 体积、415 Content-Type、422 批量条数、429 超配额、503 依赖不可用
@@ -56,9 +57,7 @@
 | 名称 | 类型 | 说明 |
 |---|---|---|
 | `TELEMETRY_URL` | repo variable | 如 `https://api.40353607.xyz/v1/events`，构建时内嵌 |
-| `TELEMETRY_AUTH` | repo secret | HMAC 密钥，Worker 与客户端共用（deploy 时自动同步到 Worker） |
-| `TELEMETRY_KEY` | repo secret | AES-256 密钥（64 hex），同上 |
-| `SESSION_KEY` | repo secret（可选） | 会话 token 签名，缺省回退 `TELEMETRY_AUTH` |
+| `SESSION_KEY` | repo secret | 会话 token 签名密钥（**仅服务端**，deploy 时同步到 Worker） |
 | `STATS_TOKEN` | repo secret（可选） | 设置后 `/v1/stats*` 需要 `?token=` 或 Bearer |
 
 配置后重新跑 `release-gui`（内嵌到安装包）与 `deploy-telemetry`（同步到 Worker）即可。

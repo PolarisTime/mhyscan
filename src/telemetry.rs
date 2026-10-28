@@ -4,21 +4,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
-use sha2::Sha256;
 
 use crate::crypto::now_secs;
 
 const SCHEMA_VERSION: u32 = 1;
 /// 构建期内嵌的默认配置（发布流水线通过环境变量注入，运行时环境变量优先）
 const BUILD_URL: Option<&str> = option_env!("MHYSCAN_TELEMETRY_URL");
-const BUILD_AUTH: Option<&str> = option_env!("MHYSCAN_TELEMETRY_AUTH");
-const BUILD_KEY: Option<&str> = option_env!("MHYSCAN_TELEMETRY_KEY");
 const MAX_QUEUE: usize = 512;
 /// 单次上报批量上限（服务端限制 256，留余量）
 const MAX_BATCH: usize = 200;
@@ -46,8 +40,7 @@ struct Inner {
     http: reqwest::Client,
     url: String,
     session_url: String,
-    auth: Option<String>,
-    enc_key: Option<Vec<u8>>,
+
     install_id: String,
     session_id: String,
     queue: Mutex<Vec<Value>>,
@@ -70,16 +63,6 @@ impl Telemetry {
             .ok()
             .or_else(|| BUILD_URL.map(str::to_string))
             .filter(|s| non_empty(s))?;
-        let auth = std::env::var("MHYSCAN_TELEMETRY_AUTH")
-            .ok()
-            .or_else(|| BUILD_AUTH.map(str::to_string))
-            .filter(|s| non_empty(s));
-        let enc_key = std::env::var("MHYSCAN_TELEMETRY_KEY")
-            .ok()
-            .or_else(|| BUILD_KEY.map(str::to_string))
-            .filter(|s| non_empty(s))
-            .and_then(|k| hex::decode(k).ok())
-            .filter(|k| k.len() == 32);
         let interval = std::env::var("MHYSCAN_TELEMETRY_INTERVAL")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -95,8 +78,6 @@ impl Telemetry {
                 http,
                 session_url: session_url_from(&url),
                 url,
-                auth,
-                enc_key,
                 install_id: load_or_create_install_id(),
                 session_id: random_hex(16),
                 queue: Mutex::new(Vec::new()),
@@ -115,16 +96,13 @@ impl Telemetry {
             }
         }
         let body = serde_json::to_vec(&json!({ "install_id": self.inner.install_id }))?;
-        let mut req = self
+        let req = self
             .inner
             .http
             .post(&self.inner.session_url)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .body(body.clone());
-        if let Some((ts, sig)) = sign_headers(self.inner.auth.as_deref(), &body) {
-            req = req.header("X-Ts", ts).header("X-Sign", sig);
-        }
         let resp = req.send().await?;
         if !resp.status().is_success() {
             anyhow::bail!("会话申请失败: HTTP {}", resp.status());
@@ -210,14 +188,7 @@ impl Telemetry {
             let count = snapshot.len();
             let token = self.ensure_token().await?;
             let payload = Value::Array(snapshot.clone());
-            match send(
-                &self.inner.http,
-                &self.inner.url,
-                self.inner.auth.as_deref(),
-                self.inner.enc_key.as_deref(),
-                Some(&token),
-                payload.clone(),
-            )
+            match send(&self.inner.http, &self.inner.url, Some(&token), payload.clone())
             .await
             {
                 Ok(()) => {}
@@ -225,14 +196,7 @@ impl Telemetry {
                     // token 过期/被吊销：清缓存后重取一次
                     *self.inner.token.lock().unwrap() = None;
                     let token = self.ensure_token().await?;
-                    send(
-                        &self.inner.http,
-                        &self.inner.url,
-                        self.inner.auth.as_deref(),
-                        self.inner.enc_key.as_deref(),
-                        Some(&token),
-                        payload,
-                    )
+                    send(&self.inner.http, &self.inner.url, Some(&token), payload)
                     .await?;
                 }
                 Err(e) => return Err(e),
@@ -347,54 +311,21 @@ impl Telemetry {
 async fn send(
     http: &reqwest::Client,
     url: &str,
-    auth: Option<&str>,
-    key: Option<&[u8]>,
     token: Option<&str>,
     payload: Value,
 ) -> anyhow::Result<()> {
     let raw = serde_json::to_vec(&payload)?;
-
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(&raw)?;
-    let mut body = encoder.finish()?;
-
-    if let Some(key) = key {
-        let nonce_bytes = {
-            let mut n = [0u8; 12];
-            for b in &mut n {
-                *b = fastrand::u8(..);
-            }
-            n
-        };
-        let cipher = Aes256Gcm::new_from_slice(key)?;
-        let nonce: Nonce<_> = nonce_bytes.into();
-        let ct = cipher
-            .encrypt(&nonce, body.as_slice())
-            .map_err(|e| anyhow::anyhow!("加密失败: {e}"))?;
-        let mut framed = nonce_bytes.to_vec();
-        framed.extend_from_slice(&ct);
-        body = framed;
-    }
-
-    let install = payload
-        .as_array()
-        .and_then(|a| a.first())
-        .or(Some(&payload))
-        .and_then(|v| v.get("install_id"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let body = encoder.finish()?;
 
     let mut req = http
         .post(url)
-        .header("Content-Type", "application/octet-stream")
-        .header("Accept", "application/json")
-        .header("X-Install-Id", install);
-
+        .header("Content-Type", "application/json")
+        .header("Content-Encoding", "gzip")
+        .header("Accept", "application/json");
     if let Some(token) = token {
         req = req.header("Authorization", format!("Bearer {token}"));
-    }
-    if let Some((ts, sig)) = sign_headers(auth, &body) {
-        req = req.header("X-Ts", ts).header("X-Sign", sig);
     }
 
     let resp = req.body(body).send().await?;
@@ -402,16 +333,6 @@ async fn send(
         anyhow::bail!("HTTP {}", resp.status());
     }
     Ok(())
-}
-
-/// HMAC 请求签名头：`X-Ts` + `X-Sign = HMAC-SHA256(X-Ts || body)`
-fn sign_headers(auth: Option<&str>, body: &[u8]) -> Option<(String, String)> {
-    let auth = auth?;
-    let ts = now_secs().to_string();
-    let mut mac = Hmac::<Sha256>::new_from_slice(auth.as_bytes()).ok()?;
-    mac.update(ts.as_bytes());
-    mac.update(body);
-    Some((ts, hex::encode(mac.finalize().into_bytes())))
 }
 
 /// 由事件上报 URL 推导会话申请 URL（可用 MHYSCAN_TELEMETRY_SESSION_URL 覆盖）
@@ -531,8 +452,6 @@ impl Telemetry {
                 http,
                 url: "http://127.0.0.1:9/collect".to_string(),
                 session_url: "http://127.0.0.1:9/sessions".to_string(),
-                auth: None,
-                enc_key: None,
                 install_id: "test-install".to_string(),
                 session_id: "test-session".to_string(),
                 queue: Mutex::new(Vec::new()),
