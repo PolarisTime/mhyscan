@@ -166,17 +166,12 @@
     font-weight: 700; font-size: 12px;
   }
   .brand-name { font-weight: 600; font-size: 13.5px; letter-spacing: -0.01em; }
-  .ver {
-    font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
-    border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px;
-  }
   .demo-badge {
     display: none; font-size: 10.5px; font-weight: 500;
     color: var(--action-text); background: var(--action-soft);
     border-radius: 999px; padding: 1px 8px;
   }
   body.is-demo .demo-badge { display: inline-block; }
-  .sep { width: 1px; height: 16px; background: var(--border); flex: none; }
 
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
@@ -193,8 +188,6 @@
   .pill[data-state="error"] { border-color: var(--danger); color: var(--danger-text); background: var(--danger-soft); }
   .pill[data-state="error"] .dot { background: var(--danger); }
 
-  .metric { display: inline-flex; align-items: baseline; gap: 5px; font-size: 12px; color: var(--text-3); white-space: nowrap; }
-  .metric b { font-family: var(--mono); font-weight: 500; font-size: 12px; color: var(--text-1); }
 
   .account-btn {
     display: inline-flex; align-items: center; gap: 7px;
@@ -532,17 +525,13 @@
 
 <div class="topbar">
   <div class="brand">
-    <div class="mark">M</div>
+    <div class="mark" id="brand-mark" title="mhyscan">M</div>
     <div class="brand-name">mhyscan</div>
-    <span class="ver" id="ver-chip">v0.4.0</span>
     <span class="demo-badge">DEMO</span>
   </div>
-  <div class="sep"></div>
   <div class="pill" id="conn-pill" data-state="idle">
     <span class="dot"></span><span id="conn-text">就绪</span>
   </div>
-  <div class="metric">运行 <b id="m-runtime" class="mono">00:00:00</b></div>
-  <div class="metric">帧率 <b id="m-fps" class="mono dim">--</b></div>
   <div class="grow"></div>
   <button class="btn-ghost icon-only" id="theme-btn" onclick="ui.toggleTheme()" title="切换浅色 / 深色主题" aria-label="切换主题">
     <svg class="icon" style="width:13px;height:13px"><use href="#i-sun"/></svg>
@@ -959,7 +948,6 @@ function startRuntimeTicker() {
     state.stats.seconds += 1;
     const c = fmtClock(state.stats.seconds);
     $("stat-runtime").textContent = c;
-    $("m-runtime").textContent = c;
   }, 1000);
 }
 function stopRuntimeTicker() {
@@ -969,13 +957,10 @@ function stopRuntimeTicker() {
 function resetStats() {
   Object.assign(state.stats, { seconds: 0, frames: 0, attempts: 0, fps: 0, memory: null, prevFrames: 0, prevSeconds: 0, prevMs: Date.now() });
   $("stat-runtime").textContent = "00:00:00";
-  $("m-runtime").textContent = "00:00:00";
   $("stat-frames").textContent = "0";
   $("stat-frames-sub").textContent = "-- fps";
   $("stat-qr").textContent = "0";
   $("stat-qr-sub").textContent = "累计抽检帧";
-  $("m-fps").textContent = "--";
-  $("m-fps").classList.add("dim");
 }
 
 function applyProgress(m) {
@@ -998,13 +983,10 @@ function applyProgress(m) {
 
   const c = fmtClock(state.stats.seconds);
   $("stat-runtime").textContent = c;
-  $("m-runtime").textContent = c;
   $("stat-frames").textContent = fmtInt(state.stats.frames);
   $("stat-qr").textContent = fmtInt(state.stats.attempts);
   $("stat-frames-sub").textContent = state.stats.fps ? `${state.stats.fps.toFixed(1)} fps` : "-- fps";
   $("stat-qr-sub").textContent = `${fmtInt(state.stats.attempts)} 次抽检`;
-  $("m-fps").textContent = state.stats.fps ? state.stats.fps.toFixed(1) : "--";
-  $("m-fps").classList.toggle("dim", !state.stats.fps);
 }
 
 function compactLog(msg) {
@@ -1447,7 +1429,10 @@ async function wire() {
   try {
     // 版本号以 Tauri 应用版本为准
     const v = await TAURI.app.getVersion();
-    if (v) $("ver-chip").textContent = `v${v}`;
+    if (v) {
+      document.title = `mhyscan v${v}`;
+      $("brand-mark").title = `mhyscan v${v}`;
+    }
   } catch (e) {
     // 旧运行时无 getVersion 时保留静态值
   }
