@@ -11,8 +11,11 @@
 - 错误响应：RFC 9457 `application/problem+json`（`type/title/status/detail/instance`）
 - 状态码：401 签名/时钟/token、400 解密/解压/JSON、403 token 与 install_id 不匹配、413 体积、415 Content-Type、422 批量条数、429 超配额、503 依赖不可用
 - 防刷：会话 token 有效期 `TOKEN_TTL`（默认 1800s）；每 install_id 每分钟配额
-  `RATE_LIMIT_PER_MIN`（事件，默认 600）与 `RATE_LIMIT_SESSIONS_PER_MIN`（会话，默认 10）；
+  `RATE_LIMIT_PER_MIN`（事件，默认 600）与 `RATE_LIMIT_SESSIONS_PER_MIN`（会话，默认 10），
+  另加每 IP 会话配额 `RATE_LIMIT_IP_PER_MIN`（默认 60，防止密钥泄露后伪造 install_id 绕过）；
   超限返回 429 + `Retry-After`
+- 管理接口默认关闭：`/v1/stats`、`/v1/stats/events` **未配置 `STATS_TOKEN` 时返回 403**（fail-closed）；
+  对公网部署建议再叠加 Cloudflare Access / WAF IP 白名单
 
 ## 信封字段（每个事件都带）
 
@@ -67,7 +70,7 @@
 | `events` | 原始事件（含 `props`、`ip_prefix`） | 90 天（Cron 清理） |
 | `scan_success` | 抢码成功/尝试记录（便于聚合） | 长期 |
 | `daily_stats` | 按天 × 事件聚合（`installs`,`total`） | 长期 |
-| `GET /v1/health` | 健康检查：`status/version/commit/time/checks.db/runtime.colo`，依赖异常返回 503 | — |
+| `GET /v1/health` | 存活探针：仅 `status/service/time/checks.db`，依赖异常返回 503（不暴露版本/commit/colo） | — |
 | `GET /v1/stats?days=1..365` | 实时聚合（直接查 `events`）：`totals{events,installs,latest_event_at}`、`by_event`、`by_day`、`success`、`rate_limit_buckets`；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
 | `GET /v1/stats/events?days=&limit=&offset=&event=` | 原始事件明细（需 `STATS_TOKEN`，未配置则 403）；返回 `event_id/ts/event/install_id/app_version/props` | — |
 | `daily_stats` | Cron 每天 03:15 UTC 写入的离线聚合，仅作历史留存；`/v1/stats` 不再依赖它 | 长期 |

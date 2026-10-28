@@ -86,7 +86,7 @@ mhyscan scan 6 --timeout 600
 - `POST /v1/sessions` 换取短效会话 token（HMAC 签名 + 每 install 限流）
 - `POST /v1/events` 接收（HMAC + AES-256-GCM + gzip + Bearer token，成功 202；超配额 429）
 - `GET /v1/health` 健康检查（含 D1 探测与版本/commit；异常返回 503）
-- `GET /v1/stats?days=1..365` 聚合概览（可选 `STATS_TOKEN` 鉴权）
+- `GET /v1/stats?days=1..365` 聚合概览（**必须** `STATS_TOKEN`，未配置 403）
 - 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理
 
 CLI 与 GUI 都会在启动/定时/退出时上报。发布版默认开启：仓库变量/密钥

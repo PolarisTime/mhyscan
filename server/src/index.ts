@@ -32,6 +32,8 @@ interface Env {
   RATE_LIMIT_PER_MIN?: string;
   /// 每 install_id 每分钟会话配额（默认 10）
   RATE_LIMIT_SESSIONS_PER_MIN?: string;
+  /// 每 IP 每分钟会话配额（默认 60）
+  RATE_LIMIT_IP_PER_MIN?: string;
 }
 
 interface TelemetryEvent {
@@ -114,15 +116,12 @@ export default {
     }
 
     if (path === `${BASE}/stats/events`) {
-      if (!env.STATS_TOKEN) {
-        return problem(403, "Forbidden", "未配置 STATS_TOKEN，明细接口不可用", path);
-      }
       const denied = statsAuth(request, env, path);
       if (denied) return denied;
       return listEvents(request, env, url);
     }
 
-    const denied = statsAuth(request, env);
+    const denied = statsAuth(request, env, path);
     if (denied) return denied;
     return stats(request, env, url);
   },
@@ -171,7 +170,10 @@ function index(): Response {
 }
 
 function statsAuth(request: Request, env: Env, path = "/v1/stats"): Response | null {
-  if (!env.STATS_TOKEN) return null;
+  // 管理接口默认关闭：未配置 STATS_TOKEN 时 fail-closed
+  if (!env.STATS_TOKEN) {
+    return problem(403, "Forbidden", "未配置 STATS_TOKEN，统计接口不可用", path);
+  }
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   const token = new URL(request.url).searchParams.get("token") || bearer || "";
   if (token !== env.STATS_TOKEN) {
@@ -291,6 +293,16 @@ async function createSession(request: Request, env: Env): Promise<Response> {
     });
   }
 
+  // 共享密钥可能被提取，按 IP 再做一层（install_id 可任意伪造）
+  const ipPrefix = truncateIp(request.headers.get("CF-Connecting-IP") || "");
+  const ipLimit = parseInt(env.RATE_LIMIT_IP_PER_MIN || "60", 10);
+  const ipRate = await bumpRate(env, `ip:${ipPrefix || "unknown"}`, 1, ipLimit);
+  if (!ipRate.allowed) {
+    return problem(429, "Too Many Requests", `该 IP 会话请求超过 ${ipLimit} 次/分钟`, "/v1/sessions", {
+      "retry-after": String(ipRate.retryAfter),
+    });
+  }
+
   const session = await issueSession(installId, env);
   return new Response(JSON.stringify({ token_type: "Bearer", ...session }), {
     status: 201,
@@ -326,24 +338,18 @@ async function readSignedBody(
 async function health(request: Request, env: Env): Promise<Response> {
   const started = Date.now();
   let dbOk = false;
-  let dbError: string | undefined;
   try {
     await env.DB.prepare("SELECT 1 AS ok").first();
     dbOk = true;
-  } catch (e) {
-    dbError = e instanceof Error ? e.message.slice(0, 120) : "unavailable";
+  } catch {
+    dbOk = false;
   }
   const latency = Date.now() - started;
   const body = {
     status: dbOk ? "ok" : "degraded",
     service: "mhyscan-telemetry",
-    version: env.SERVICE_VERSION || "dev",
-    commit: env.GIT_SHA || null,
     time: Math.floor(Date.now() / 1000),
-    checks: {
-      db: { ok: dbOk, latency_ms: latency, ...(dbError ? { error: dbError } : {}) },
-    },
-    runtime: { colo: (request.cf?.colo as string | undefined) ?? null },
+    checks: { db: { ok: dbOk, latency_ms: latency } },
   };
   const headers: Record<string, string> = {
     "content-type": "application/json",
