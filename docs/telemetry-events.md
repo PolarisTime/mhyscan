@@ -55,7 +55,8 @@
 | `scan_success` | 抢码成功/尝试记录（便于聚合） | 长期 |
 | `daily_stats` | 按天 × 事件聚合（`installs`,`total`） | 长期 |
 | `GET /v1/health` | 健康检查：`status/version/commit/time/checks.db/runtime.colo`，依赖异常返回 503 | — |
-| `GET /v1/stats?days=1..365` | 聚合概览；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
+| `GET /v1/stats?days=1..365` | 实时聚合（直接查 `events`）：`totals{events,installs,latest_event_at}`、`by_event`、`by_day`、`success`、`rate_limit_buckets`；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
+| `daily_stats` | Cron 每天 03:15 UTC 写入的离线聚合，仅作历史留存；`/v1/stats` 不再依赖它 | 长期 |
 
 ## 隐私约束（禁止上报）
 

@@ -475,26 +475,70 @@ async function stats(request: Request, env: Env, url: URL): Promise<Response> {
   if (!Number.isInteger(days) || days < 1 || days > 365) {
     return problem(400, "Bad Request", "days 必须是 1..365 的整数", url.pathname);
   }
+  const since = `-${days} day`;
+  const windowStart = `unixepoch('now', ?)`;
 
-  const daily = await env.DB.prepare(
-    `SELECT day, event, installs, total
-       FROM daily_stats
-      WHERE day >= date('now', ?)
-      ORDER BY day DESC`
+  // 直接聚合 events（daily_stats 只由 Cron 每天写一次，不能反映实时状态）
+  const totals = await env.DB.prepare(
+    `SELECT COUNT(*) AS events,
+            COUNT(DISTINCT install_id) AS installs,
+            COALESCE(MAX(ts), 0) AS latest_ts
+       FROM events
+      WHERE ts >= ${windowStart}`
   )
-    .bind(`-${days} day`)
+    .bind(since)
+    .first<{ events: number; installs: number; latest_ts: number }>();
+
+  const byEvent = await env.DB.prepare(
+    `SELECT event, COUNT(*) AS total, COUNT(DISTINCT install_id) AS installs
+       FROM events
+      WHERE ts >= ${windowStart}
+      GROUP BY event
+      ORDER BY total DESC
+      LIMIT 50`
+  )
+    .bind(since)
     .all();
+
+  const byDay = await env.DB.prepare(
+    `SELECT date(ts, 'unixepoch') AS day,
+            event,
+            COUNT(*) AS total,
+            COUNT(DISTINCT install_id) AS installs
+       FROM events
+      WHERE ts >= ${windowStart}
+      GROUP BY day, event
+      ORDER BY day DESC, total DESC
+      LIMIT 200`
+  )
+    .bind(since)
+    .all();
+
   const success = await env.DB.prepare(
-    `SELECT platform, COUNT(*) AS total
+    `SELECT platform, COUNT(*) AS total, COUNT(DISTINCT install_id) AS installs
        FROM scan_success
-      GROUP BY platform`
-  ).all();
+      WHERE ts >= ${windowStart}
+      GROUP BY platform
+      ORDER BY total DESC`
+  )
+    .bind(since)
+    .all();
+
+  const rate = await env.DB.prepare(`SELECT COUNT(*) AS buckets FROM rate_limits`)
+    .first<{ buckets: number }>();
 
   const body = {
     generated_at: Math.floor(Date.now() / 1000),
     window_days: days,
-    daily: daily.results,
-    success: success.results,
+    totals: {
+      events: totals?.events ?? 0,
+      installs: totals?.installs ?? 0,
+      latest_event_at: totals?.latest_ts || null,
+    },
+    by_event: byEvent.results ?? [],
+    by_day: byDay.results ?? [],
+    success: success.results ?? [],
+    rate_limit_buckets: rate?.buckets ?? 0,
   };
   return new Response(request.method === "HEAD" ? null : JSON.stringify(body), {
     status: 200,
