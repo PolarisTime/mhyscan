@@ -50,6 +50,10 @@ jobs:
         run: cargo tauri icon ../../app-icon.png
       - name: Build GUI bundle
         working-directory: tauri-app/src-tauri
+        env:
+          MHYSCAN_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
+          MHYSCAN_TELEMETRY_AUTH: ${{ secrets.TELEMETRY_AUTH }}
+          MHYSCAN_TELEMETRY_KEY: ${{ secrets.TELEMETRY_KEY }}
         run: cargo tauri build
       - name: Collect installers
         shell: bash

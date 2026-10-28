@@ -89,7 +89,10 @@ mhyscan scan 6 --timeout 600
 - `GET /v1/stats?days=1..365` 聚合概览（可选 `STATS_TOKEN` 鉴权）
 - 错误统一 RFC 9457 `application/problem+json`；每日 Cron 聚合与 90 天清理
 
-CLI 与 GUI 都会在启动/定时/退出时上报（GUI 需带遥测环境变量启动）。见 `docs/telemetry-events.md`。
+CLI 与 GUI 都会在启动/定时/退出时上报。发布版默认开启：仓库变量/密钥
+`TELEMETRY_URL` / `TELEMETRY_AUTH` / `TELEMETRY_KEY` 会在构建时内嵌进二进制，
+同时 `deploy-telemetry` 会把同名 secret 同步到 Worker，保证两端一致。
+运行时可用 `DO_NOT_TRACK=1` 或 `MHYSCAN_TELEMETRY=0` 关闭；未配置则遥测关闭。见 `docs/telemetry-events.md`。
 
 部署：
 ```bash

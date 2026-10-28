@@ -89,6 +89,7 @@ export default {
       [`${BASE}/events`]: ["POST"],
       [`${BASE}/health`]: ["GET", "HEAD"],
       [`${BASE}/stats`]: ["GET", "HEAD"],
+      [`${BASE}/stats/events`]: ["GET", "HEAD"],
     };
 
     if (path === "/" && method === "GET") return index();
@@ -110,6 +111,15 @@ export default {
         return problem(415, "Unsupported Media Type", "Content-Type 必须为 application/octet-stream", path);
       }
       return collect(request, env);
+    }
+
+    if (path === `${BASE}/stats/events`) {
+      if (!env.STATS_TOKEN) {
+        return problem(403, "Forbidden", "未配置 STATS_TOKEN，明细接口不可用", path);
+      }
+      const denied = statsAuth(request, env, path);
+      if (denied) return denied;
+      return listEvents(request, env, url);
     }
 
     const denied = statsAuth(request, env);
@@ -160,12 +170,12 @@ function index(): Response {
   );
 }
 
-function statsAuth(request: Request, env: Env): Response | null {
+function statsAuth(request: Request, env: Env, path = "/v1/stats"): Response | null {
   if (!env.STATS_TOKEN) return null;
   const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
   const token = new URL(request.url).searchParams.get("token") || bearer || "";
   if (token !== env.STATS_TOKEN) {
-    return problem(401, "Unauthorized", "缺少或错误的 STATS_TOKEN", "/v1/stats", {
+    return problem(401, "Unauthorized", "缺少或错误的 STATS_TOKEN", path, {
       "www-authenticate": 'Bearer realm="stats"',
     });
   }
@@ -467,6 +477,68 @@ async function collect(request: Request, env: Env): Promise<Response> {
     JSON.stringify({ accepted: list.length, rejected: list.length - accepted }),
     { status: 202, headers: { "content-type": "application/json", "cache-control": "no-store" } },
   );
+}
+
+function safeJson(text: unknown): unknown {
+  if (typeof text !== "string") return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function listEvents(request: Request, env: Env, url: URL): Promise<Response> {
+  const days = Number(url.searchParams.get("days") ?? "7");
+  if (!Number.isInteger(days) || days < 1 || days > 365) {
+    return problem(400, "Bad Request", "days 必须是 1..365 的整数", url.pathname);
+  }
+  const limit = Number(url.searchParams.get("limit") ?? "100");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    return problem(400, "Bad Request", "limit 必须是 1..500 的整数", url.pathname);
+  }
+  const offset = Number(url.searchParams.get("offset") ?? "0");
+  if (!Number.isInteger(offset) || offset < 0 || offset > 100000) {
+    return problem(400, "Bad Request", "offset 必须是 0..100000 的整数", url.pathname);
+  }
+  const event = url.searchParams.get("event");
+
+  const binds: unknown[] = [`-${days} day`];
+  let sql = `SELECT event_id, ts, event, install_id, app_version, props
+               FROM events
+              WHERE ts >= unixepoch('now', ?)`;
+  if (event) {
+    sql += ` AND event = ?`;
+    binds.push(event);
+  }
+  sql += ` ORDER BY ts DESC LIMIT ? OFFSET ?`;
+  binds.push(limit, offset);
+
+  const rows = await env.DB.prepare(sql).bind(...binds).all();
+  const events = (rows.results ?? []).map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      event_id: r.event_id ?? null,
+      ts: r.ts ?? null,
+      event: r.event ?? null,
+      install_id: r.install_id ?? null,
+      app_version: r.app_version ?? null,
+      props: safeJson(r.props),
+    };
+  });
+
+  const body = {
+    generated_at: Math.floor(Date.now() / 1000),
+    window_days: days,
+    limit,
+    offset,
+    count: events.length,
+    events,
+  };
+  return new Response(request.method === "HEAD" ? null : JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
 }
 
 async function stats(request: Request, env: Env, url: URL): Promise<Response> {

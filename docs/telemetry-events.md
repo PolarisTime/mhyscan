@@ -1,6 +1,7 @@
 # mhyscan 遥测事件数据字典
 
 - `schema_version`: **1**（只增字段不改语义；破坏性变更才升版本）
+- 构建期默认值：发布流水线可通过 `MHYSCAN_TELEMETRY_URL/_AUTH/_KEY` 环境变量把配置内嵌进二进制；运行时环境变量优先
 - 会话接口：`POST /v1/sessions`（HMAC 签名，body `{"install_id":"<32 hex>"}`）→ `201` `{token, token_type:"Bearer", expires_in}`
 - 上报接口：`POST /v1/events`（必须带 `Authorization: Bearer <token>`）
 - 上报格式：`nonce(12B) || AES-256-GCM( gzip( JSON ) )`，body 为单个事件对象或事件数组
@@ -47,6 +48,18 @@
 > 服务端 `scan_success` 表只为 `scan_success` 事件写入，`scan_result`（失败）只进 `events` 表。
 | `error` | `exc_type` | string | 异常类型名（**不含堆栈明文**） |
 
+## 仓库配置（发布默认开启）
+
+| 名称 | 类型 | 说明 |
+|---|---|---|
+| `TELEMETRY_URL` | repo variable | 如 `https://api.40353607.xyz/v1/events`，构建时内嵌 |
+| `TELEMETRY_AUTH` | repo secret | HMAC 密钥，Worker 与客户端共用（deploy 时自动同步到 Worker） |
+| `TELEMETRY_KEY` | repo secret | AES-256 密钥（64 hex），同上 |
+| `SESSION_KEY` | repo secret（可选） | 会话 token 签名，缺省回退 `TELEMETRY_AUTH` |
+| `STATS_TOKEN` | repo secret（可选） | 设置后 `/v1/stats*` 需要 `?token=` 或 Bearer |
+
+配置后重新跑 `release-gui`（内嵌到安装包）与 `deploy-telemetry`（同步到 Worker）即可。
+
 ## 服务端表
 
 | 表 | 说明 | 保留 |
@@ -56,6 +69,7 @@
 | `daily_stats` | 按天 × 事件聚合（`installs`,`total`） | 长期 |
 | `GET /v1/health` | 健康检查：`status/version/commit/time/checks.db/runtime.colo`，依赖异常返回 503 | — |
 | `GET /v1/stats?days=1..365` | 实时聚合（直接查 `events`）：`totals{events,installs,latest_event_at}`、`by_event`、`by_day`、`success`、`rate_limit_buckets`；设置 `STATS_TOKEN` 后需 `?token=` 或 `Authorization: Bearer` | — |
+| `GET /v1/stats/events?days=&limit=&offset=&event=` | 原始事件明细（需 `STATS_TOKEN`，未配置则 403）；返回 `event_id/ts/event/install_id/app_version/props` | — |
 | `daily_stats` | Cron 每天 03:15 UTC 写入的离线聚合，仅作历史留存；`/v1/stats` 不再依赖它 | 长期 |
 
 ## 隐私约束（禁止上报）

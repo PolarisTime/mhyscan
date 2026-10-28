@@ -15,6 +15,10 @@ use sha2::Sha256;
 use crate::crypto::now_secs;
 
 const SCHEMA_VERSION: u32 = 1;
+/// 构建期内嵌的默认配置（发布流水线通过环境变量注入，运行时环境变量优先）
+const BUILD_URL: Option<&str> = option_env!("MHYSCAN_TELEMETRY_URL");
+const BUILD_AUTH: Option<&str> = option_env!("MHYSCAN_TELEMETRY_AUTH");
+const BUILD_KEY: Option<&str> = option_env!("MHYSCAN_TELEMETRY_KEY");
 const MAX_QUEUE: usize = 512;
 /// 单次上报批量上限（服务端限制 256，留余量）
 const MAX_BATCH: usize = 200;
@@ -60,10 +64,20 @@ impl Telemetry {
         {
             return None;
         }
-        let url = std::env::var("MHYSCAN_TELEMETRY_URL").ok()?;
-        let auth = std::env::var("MHYSCAN_TELEMETRY_AUTH").ok();
+        // 空字符串（CI 未配置变量时会被展开成空）视为未设置
+        let non_empty = |s: &str| !s.trim().is_empty();
+        let url = std::env::var("MHYSCAN_TELEMETRY_URL")
+            .ok()
+            .or_else(|| BUILD_URL.map(str::to_string))
+            .filter(|s| non_empty(s))?;
+        let auth = std::env::var("MHYSCAN_TELEMETRY_AUTH")
+            .ok()
+            .or_else(|| BUILD_AUTH.map(str::to_string))
+            .filter(|s| non_empty(s));
         let enc_key = std::env::var("MHYSCAN_TELEMETRY_KEY")
             .ok()
+            .or_else(|| BUILD_KEY.map(str::to_string))
+            .filter(|s| non_empty(s))
             .and_then(|k| hex::decode(k).ok())
             .filter(|k| k.len() == 32);
         let interval = std::env::var("MHYSCAN_TELEMETRY_INTERVAL")
